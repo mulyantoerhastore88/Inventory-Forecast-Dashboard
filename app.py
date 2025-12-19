@@ -1081,11 +1081,23 @@ with tab5:
             st.altair_chart(sales_chart, use_container_width=True)
         
         with col_s2:
-            # Top performing SKUs
-            top_skus = df_sales.groupby(['SKU_ID', 'Product_Name']).agg({
+            # --- PERBAIKAN DI SINI (FIX KEY ERROR) ---
+            # 1. Group by SKU_ID saja (karena Product_Name tidak ada di df_sales)
+            top_skus = df_sales.groupby('SKU_ID').agg({
                 'Sales_Qty': 'sum',
                 'Month': 'nunique'
             }).reset_index()
+            
+            # 2. Tempelkan Product_Name dari Product Master
+            if not df_product.empty:
+                top_skus = pd.merge(
+                    top_skus, 
+                    df_product[['SKU_ID', 'Product_Name']].drop_duplicates(), 
+                    on='SKU_ID', 
+                    how='left'
+                )
+            
+            # 3. Sort dan Display
             top_skus = top_skus.sort_values('Sales_Qty', ascending=False).head(10)
             
             st.dataframe(
@@ -1101,23 +1113,30 @@ with tab5:
             )
         
         # Sales by Tier if available
-        if 'SKU_Tier' in df_sales.columns:
-            tier_sales = df_sales.groupby('SKU_Tier').agg({
-                'Sales_Qty': 'sum',
-                'SKU_ID': 'nunique'
-            }).reset_index()
-            tier_sales = tier_sales.sort_values('Sales_Qty', ascending=False)
+        # Kita perlu tempel Tier dulu ke df_sales karena aslinya tidak ada
+        if not df_product.empty and 'SKU_Tier' in df_product.columns:
+            # Buat df sementara yang ada Tier-nya
+            tier_info = df_product[['SKU_ID', 'SKU_Tier']].drop_duplicates()
+            df_sales_tier = pd.merge(df_sales, tier_info, on='SKU_ID', how='left')
             
-            st.subheader("🏷️ Sales by SKU Tier")
-            
-            bars_tier_sales = alt.Chart(tier_sales).mark_bar().encode(
-                x=alt.X('SKU_Tier:N', title='SKU Tier', sort='-y'),
-                y=alt.Y('Sales_Qty:Q', title='Total Sales'),
-                color=alt.Color('SKU_Tier:N', scale=alt.Scale(scheme='set2')),
-                tooltip=['SKU_Tier', 'Sales_Qty', 'SKU_ID']
-            ).properties(height=300)
-            
-            st.altair_chart(bars_tier_sales, use_container_width=True)
+            if 'SKU_Tier' in df_sales_tier.columns:
+                tier_sales = df_sales_tier.groupby('SKU_Tier').agg({
+                    'Sales_Qty': 'sum',
+                    'SKU_ID': 'nunique'
+                }).reset_index()
+                
+                tier_sales = tier_sales.sort_values('Sales_Qty', ascending=False)
+                
+                st.subheader("🏷️ Sales by SKU Tier")
+                
+                bars_tier_sales = alt.Chart(tier_sales).mark_bar().encode(
+                    x=alt.X('SKU_Tier:N', title='SKU Tier', sort='-y'),
+                    y=alt.Y('Sales_Qty:Q', title='Total Sales'),
+                    color=alt.Color('SKU_Tier:N', scale=alt.Scale(scheme='set2')),
+                    tooltip=['SKU_Tier', 'Sales_Qty', 'SKU_ID']
+                ).properties(height=300)
+                
+                st.altair_chart(bars_tier_sales, use_container_width=True)
 
 # --- TAB 6: DATA EXPLORER ---
 with tab6:
