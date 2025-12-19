@@ -12,7 +12,7 @@ warnings.filterwarnings('ignore')
 
 # --- Konfigurasi Halaman ---
 st.set_page_config(
-    page_title="Inventory Intelligence Pro V8",
+    page_title="Inventory Intelligence Pro V8.1",
     page_icon="💎",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -27,9 +27,9 @@ st.markdown("""
 
     /* Header Styling */
     .main-header {
-        font-size: 2.8rem;
+        font-size: 2.5rem;
         font-weight: 800;
-        color: #5c6bc0; /* Warna ungu kebiruan seperti di gambar */
+        color: #5c6bc0;
         text-align: center;
         margin-bottom: 0.5rem;
         text-transform: uppercase;
@@ -42,74 +42,90 @@ st.markdown("""
         margin-bottom: 2rem;
     }
 
-    /* MONTHLY CARDS (TOP ROW) */
+    /* MONTHLY CARDS (TOP ROW - WHITE) */
     .month-card {
         background: white;
         border-radius: 15px;
         padding: 20px;
-        /* Floating Effect */
-        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
-        border-left: 6px solid #4CAF50; /* Green accent on left */
+        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
+        border-left: 6px solid #5c6bc0;
         transition: transform 0.3s ease;
         margin-bottom: 20px;
         height: 100%;
     }
     .month-card:hover { transform: translateY(-5px); }
     
-    .month-title { font-size: 1.5rem; font-weight: 700; color: #333; margin-bottom: 10px; }
+    .month-title { font-size: 1.4rem; font-weight: 700; color: #333; margin-bottom: 10px; }
     
     .status-badge-container {
         display: flex; gap: 5px; justify-content: flex-end; margin-bottom: 15px;
     }
     .badge {
-        padding: 5px 10px; border-radius: 8px; color: white; 
-        font-size: 0.75rem; font-weight: bold; text-align: center; min-width: 60px;
+        padding: 4px 8px; border-radius: 6px; color: white; 
+        font-size: 0.7rem; font-weight: bold; min-width: 50px; text-align: center;
     }
-    .badge-red { background-color: #FF5252; }
-    .badge-green { background-color: #4CAF50; }
-    .badge-orange { background-color: #FFA726; }
+    .badge-red { background-color: #ef5350; }
+    .badge-green { background-color: #66bb6a; }
+    .badge-orange { background-color: #ffa726; }
     
-    .month-metric-val { font-size: 1.8rem; font-weight: 800; color: #333; }
-    .month-metric-lbl { font-size: 0.8rem; color: #666; }
+    .month-metric-val { font-size: 1.8rem; font-weight: 800; color: #2c3e50; }
+    .month-metric-lbl { font-size: 0.8rem; color: #7f8c8d; }
 
     /* SUMMARY CARDS (BOTTOM ROW - SOLID COLORS) */
     .summary-card {
-        border-radius: 12px;
-        padding: 25px 15px;
+        border-radius: 15px;
+        padding: 25px 20px;
         text-align: center;
         color: white;
-        /* Floating Effect Stronger */
-        box-shadow: 0 14px 28px rgba(0,0,0,0.15), 0 10px 10px rgba(0,0,0,0.12);
+        box-shadow: 0 14px 28px rgba(0,0,0,0.10), 0 10px 10px rgba(0,0,0,0.10);
         margin-bottom: 20px;
         transition: all 0.3s cubic-bezier(.25,.8,.25,1);
-        height: 100%;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
+        position: relative;
+        overflow: hidden;
     }
-    .summary-card:hover { box-shadow: 0 19px 38px rgba(0,0,0,0.20), 0 15px 12px rgba(0,0,0,0.12); }
+    .summary-card:hover { transform: scale(1.02); box-shadow: 0 19px 38px rgba(0,0,0,0.15); }
 
-    /* Warna Solid sesuai gambar */
-    .bg-solid-red { background: linear-gradient(135deg, #FF5252 0%, #F44336 100%); }
-    .bg-solid-green { background: linear-gradient(135deg, #66BB6A 0%, #43A047 100%); }
-    .bg-solid-orange { background: linear-gradient(135deg, #FFA726 0%, #FB8C00 100%); }
+    /* Solid Colors Gradients */
+    .bg-solid-red { background: linear-gradient(135deg, #FF5252 0%, #D32F2F 100%); }
+    .bg-solid-green { background: linear-gradient(135deg, #66BB6A 0%, #2E7D32 100%); }
+    .bg-solid-orange { background: linear-gradient(135deg, #FFA726 0%, #EF6C00 100%); }
     
-    /* Kartu Average (White style) */
+    /* White Card for Average */
     .bg-solid-white { 
         background: white; 
         color: #333; 
-        border-top: 6px solid #5c6bc0;
+        border-top: 5px solid #5c6bc0;
     }
 
-    .sum-title { font-size: 0.9rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; opacity: 0.9; margin-bottom: 10px;}
-    .sum-value { font-size: 3rem; font-weight: 800; line-height: 1; margin-bottom: 5px; }
-    .sum-sub { font-size: 0.85rem; font-weight: 500; opacity: 0.9; }
-    .text-blue { color: #5c6bc0; }
+    /* Typography inside Summary Cards */
+    .sum-title { 
+        font-size: 0.9rem; font-weight: 700; text-transform: uppercase; 
+        letter-spacing: 1px; opacity: 0.9; margin-bottom: 15px;
+    }
+    .sum-value { 
+        font-size: 3.5rem; font-weight: 800; line-height: 1; margin-bottom: 5px; 
+    }
+    .sum-pct {
+        font-size: 1.1rem; font-weight: 600; margin-bottom: 15px; opacity: 0.9;
+    }
+    .sum-footer {
+        border-top: 1px solid rgba(255,255,255,0.3);
+        padding-top: 10px;
+        font-size: 0.85rem;
+        font-weight: 500;
+        opacity: 0.9;
+    }
+    
+    /* Text colors for White Card */
+    .bg-solid-white .sum-title { color: #666; }
+    .bg-solid-white .sum-value { color: #5c6bc0; }
+    .bg-solid-white .sum-pct { color: #333; }
+    .bg-solid-white .sum-footer { border-top: 1px solid #eee; color: #666; }
 
     /* Tabs Styling */
     .stTabs [data-baseweb="tab-list"] { gap: 10px; margin-top: 20px; }
     .stTabs [data-baseweb="tab"] {
-        background-color: #f1f3f4; border-radius: 8px 8px 0 0; border: none; font-weight: 600;
+        background-color: #f8f9fa; border-radius: 8px 8px 0 0; border: none; font-weight: 600;
     }
     .stTabs [aria-selected="true"] {
         background-color: white; color: #5c6bc0; border-top: 3px solid #5c6bc0;
@@ -119,9 +135,9 @@ st.markdown("""
 
 # --- ICON HEADER ---
 st.markdown("""
-<div style="text-align: center; font-size: 4rem; margin-bottom: -20px;">🟦</div>
+<div style="text-align: center; font-size: 3.5rem; margin-bottom: -15px;">🟦</div>
 <h1 class="main-header">INVENTORY INTELLIGENCE DASHBOARD</h1>
-<div class="sub-header-caption">🚀 Professional Inventory Control & Demand Planning | Real-time Analytics | Updated: 19 December 2025</div>
+<div class="sub-header-caption">🚀 Professional Inventory Control & Demand Planning | Real-time Analytics</div>
 """, unsafe_allow_html=True)
 
 # --- ====================================================== ---
@@ -257,7 +273,7 @@ def create_tier_chart(df_data):
                  title="Accuracy Distribution by Tier",
                  color_discrete_map={'Under': '#ef5350', 'Accurate': '#66bb6a', 'Over': '#ffa726'},
                  template="plotly_white")
-    fig.update_layout(height=400)
+    fig.update_layout(height=350)
     return fig
 
 # --- ====================================================== ---
@@ -267,14 +283,14 @@ def create_tier_chart(df_data):
 client = init_gsheet_connection()
 if not client: st.stop()
 
-with st.spinner('🔄 Loading Data...'):
+with st.spinner('🔄 Loading Intelligence Engine...'):
     all_data = load_and_process_data(client)
     
 monthly_perf = calculate_monthly_performance(all_data['forecast'], all_data['po'], all_data['product'])
 inv_df = calculate_inventory_metrics(all_data['stock'], all_data['sales'], all_data['product'])
 
 # --- HEADER SECTION: PERFORMANCE 3 BULAN TERAKHIR ---
-st.markdown("### 📊 Performance Accuracy - 3 Bulan Terakhir")
+st.subheader("📊 Performance Accuracy - 3 Bulan Terakhir")
 
 if monthly_perf:
     last_3_months = sorted(monthly_perf.keys())[-3:]
@@ -341,8 +357,8 @@ if monthly_perf:
         <div class="summary-card bg-solid-red">
             <div class="sum-title">TOTAL UNDER</div>
             <div class="sum-value">{under_count}</div>
-            <div class="sum-sub">{under_pct:.1f}% of total</div>
-            <div style="margin-top:10px; font-size:0.8rem; opacity:0.8;">Total Qty: {under_qty:,.0f}</div>
+            <div class="sum-pct">{under_pct:.1f}% of total</div>
+            <div class="sum-footer">Total Qty: {under_qty:,.0f}</div>
         </div>
         """, unsafe_allow_html=True)
         
@@ -351,8 +367,8 @@ if monthly_perf:
         <div class="summary-card bg-solid-green">
             <div class="sum-title">TOTAL ACCURATE</div>
             <div class="sum-value">{acc_count}</div>
-            <div class="sum-sub">{acc_pct:.1f}% of total</div>
-            <div style="margin-top:10px; font-size:0.8rem; opacity:0.8;">Total Qty: {acc_qty:,.0f}</div>
+            <div class="sum-pct">{acc_pct:.1f}% of total</div>
+            <div class="sum-footer">Total Qty: {acc_qty:,.0f}</div>
         </div>
         """, unsafe_allow_html=True)
         
@@ -361,18 +377,18 @@ if monthly_perf:
         <div class="summary-card bg-solid-orange">
             <div class="sum-title">TOTAL OVER</div>
             <div class="sum-value">{over_count}</div>
-            <div class="sum-sub">{over_pct:.1f}% of total</div>
-            <div style="margin-top:10px; font-size:0.8rem; opacity:0.8;">Total Qty: {over_qty:,.0f}</div>
+            <div class="sum-pct">{over_pct:.1f}% of total</div>
+            <div class="sum-footer">Total Qty: {over_qty:,.0f}</div>
         </div>
         """, unsafe_allow_html=True)
         
     with c4:
         st.markdown(f"""
         <div class="summary-card bg-solid-white">
-            <div class="sum-title" style="color:#666;">AVERAGE ACCURACY</div>
-            <div class="sum-value text-blue">{avg_acc:.1f}%</div>
-            <div class="sum-sub" style="color:#888;">{len(last_month_data)} Total Records</div>
-            <div style="margin-top:10px; font-size:0.8rem; color:#888;">Period: {last_month.strftime('%b %Y')}</div>
+            <div class="sum-title">AVERAGE ACCURACY</div>
+            <div class="sum-value">{avg_acc:.1f}%</div>
+            <div class="sum-pct">{len(last_month_data)} Records</div>
+            <div class="sum-footer">Period: {last_month.strftime('%b %Y')}</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -390,15 +406,12 @@ tab_eval, tab_tier, tab_inv, tab_sales, tab_raw = st.tabs([
 with tab_eval:
     if monthly_perf:
         st.subheader(f"Detail Evaluasi SKU - {last_month.strftime('%b %Y')}")
-        st.info("Fokus pada perbaikan SKU dengan status Under dan Over.")
         
         # Merge Inventory Info
         eval_df = pd.merge(last_month_data, inv_df[['SKU_ID', 'Stock_Qty', 'Avg_Sales_3M']], on='SKU_ID', how='left')
         
-        # Kolom Final
         cols_final = ['SKU_ID', 'Product_Name', 'Brand', 'SKU_Tier', 'Status', 
                       'Forecast_Qty', 'PO_Qty', 'Ratio', 'Stock_Qty', 'Avg_Sales_3M']
-        # Filter avail columns
         cols_final = [c for c in cols_final if c in eval_df.columns]
         
         df_show = eval_df[cols_final].rename(columns={'Ratio': 'Achv %', 'Stock_Qty': 'Stock', 'Avg_Sales_3M': 'Avg Sales'})
@@ -416,11 +429,11 @@ with tab_eval:
 # --- TAB: TIER ANALYSIS ---
 with tab_tier:
     if monthly_perf:
-        c1, c2 = st.columns([2, 1])
-        with c1:
+        col1, col2 = st.columns([2, 1])
+        with col1:
             fig = create_tier_chart(last_month_data)
             if fig: st.plotly_chart(fig, use_container_width=True)
-        with c2:
+        with col2:
             if 'SKU_Tier' in last_month_data.columns:
                 ts = last_month_data.groupby(['SKU_Tier', 'Status']).size().unstack(fill_value=0)
                 ts['Total'] = ts.sum(axis=1)
@@ -431,13 +444,26 @@ with tab_tier:
 with tab_inv:
     if not inv_df.empty:
         c1, c2, c3 = st.columns(3)
-        with c1: st.metric("Replenish Needed", len(inv_df[inv_df['Status']=='Need Replenishment']))
-        with c2: st.metric("Healthy Stock", len(inv_df[inv_df['Status']=='Ideal/Healthy']))
-        with c3: st.metric("Overstock", len(inv_df[inv_df['Status']=='High Stock']))
+        n_rep = len(inv_df[inv_df['Status']=='Need Replenishment'])
+        n_ideal = len(inv_df[inv_df['Status']=='Ideal/Healthy'])
+        n_high = len(inv_df[inv_df['Status']=='High Stock'])
         
-        st.write("### Detail Stock Status")
+        with c1: st.metric("Need Replenishment", n_rep, "Cover < 0.8 Mo")
+        with c2: st.metric("Ideal Inventory", n_ideal, "Cover 0.8 - 1.5 Mo")
+        with c3: st.metric("High Stock", n_high, "Cover > 1.5 Mo")
+        
+        st.divider()
+        st.write("### 🔍 Detail Inventory SKU")
         fil = st.multiselect("Filter", inv_df['Status'].unique(), default=['Need Replenishment', 'High Stock'])
-        st.dataframe(inv_df[inv_df['Status'].isin(fil)], use_container_width=True)
+        
+        show_cols = ['SKU_ID', 'Product_Name', 'Stock_Qty', 'Avg_Sales_3M', 'Cover_Months', 'Status', 'Brand', 'SKU_Tier']
+        show_cols = [c for c in show_cols if c in inv_df.columns]
+        
+        st.dataframe(
+            inv_df[inv_df['Status'].isin(fil)][show_cols].sort_values('Cover_Months', ascending=False),
+            column_config={"Cover_Months": st.column_config.NumberColumn(format="%.1f")},
+            use_container_width=True
+        )
 
 # --- TAB: SALES ---
 with tab_sales:
@@ -455,12 +481,15 @@ with tab_sales:
             comp['Dev %'] = (comp['Sales_Qty'] - comp['Forecast_Qty']) / comp['Forecast_Qty'] * 100
             comp['Abs Dev'] = abs(comp['Dev %'])
             
-            st.write(f"### High Deviation SKU (>30%) - {lm.strftime('%b %Y')}")
+            st.metric(f"Total Sales ({lm.strftime('%b')})", f"{comp['Sales_Qty'].sum():,.0f}")
+            st.write(f"### High Deviation SKU (>30%)")
             st.dataframe(
                 comp[comp['Abs Dev']>30].sort_values('Abs Dev', ascending=False),
                 column_config={"Dev %": st.column_config.NumberColumn(format="%.1f%%")},
                 use_container_width=True
             )
+        else:
+            st.info("Data Sales & Forecast tidak memiliki bulan yang sama.")
 
 # --- TAB: RAW DATA ---
 with tab_raw:
@@ -474,4 +503,4 @@ with st.sidebar:
     if st.button("🔄 Refresh Data", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
-    st.info("V8.0 Visual Masterpiece")
+    st.info("V8.1 Visual Masterpiece")
