@@ -173,6 +173,24 @@ st.markdown("""
         font-size: 0.8rem;
         font-weight: bold;
     }
+    
+    /* Compact metrics */
+    .compact-metric {
+        background: white;
+        border-radius: 10px;
+        padding: 1rem;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        margin: 0.5rem 0;
+    }
+    
+    /* Brand performance */
+    .brand-card {
+        background: white;
+        border-radius: 12px;
+        padding: 1rem;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+        border-top: 4px solid #667eea;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -637,37 +655,92 @@ def calculate_sales_vs_forecast_po(df_sales, df_forecast, df_po, df_product):
         st.error(f"Sales vs forecast calculation error: {str(e)}")
         return results
 
-def create_monthly_performance_display(monthly_performance, month):
-    """Create display for monthly performance"""
+def calculate_brand_performance(df_forecast, df_po, df_product):
+    """Calculate forecast accuracy performance by brand"""
     
-    if month not in monthly_performance:
-        return ""
+    if df_forecast.empty or df_po.empty or df_product.empty:
+        return pd.DataFrame()
     
-    data = monthly_performance[month]
-    month_name = month.strftime('%b %Y')
-    
-    display_html = f"""
-    <div class="monthly-performance-card performance-accurate">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-            <div>
-                <h3 style="margin: 0;">{month_name}</h3>
-                <p style="margin: 0; color: #666;">Overall Accuracy: <strong>{data['accuracy']:.1f}%</strong></p>
-            </div>
-            <div style="text-align: right;">
-                <div style="display: flex; gap: 10px;">
-                    <span class="warning-badge">Under: {data['status_counts'].get('Under', 0)}</span>
-                    <span class="success-badge">Accurate: {data['status_counts'].get('Accurate', 0)}</span>
-                    <span class="warning-badge" style="background: #FF9800;">Over: {data['status_counts'].get('Over', 0)}</span>
-                </div>
-                <p style="margin: 5px 0 0 0; font-size: 0.9rem; color: #888;">
-                    Total SKUs: {data['total_records']}
-                </p>
-            </div>
-        </div>
-    </div>
-    """
-    
-    return display_html
+    try:
+        # Get last month data
+        forecast_months = sorted(df_forecast['Month'].unique())
+        po_months = sorted(df_po['Month'].unique())
+        common_months = sorted(set(forecast_months) & set(po_months))
+        
+        if not common_months:
+            return pd.DataFrame()
+        
+        last_month = common_months[-1]
+        
+        # Get data for last month
+        df_forecast_month = df_forecast[df_forecast['Month'] == last_month].copy()
+        df_po_month = df_po[df_po['Month'] == last_month].copy()
+        
+        # Merge forecast and PO
+        df_merged = pd.merge(
+            df_forecast_month,
+            df_po_month,
+            on=['SKU_ID'],
+            how='inner'
+        )
+        
+        # Add brand info
+        if 'Brand' not in df_merged.columns and 'Brand' in df_product.columns:
+            brand_info = df_product[['SKU_ID', 'Brand']].drop_duplicates()
+            df_merged = pd.merge(df_merged, brand_info, on='SKU_ID', how='left')
+        
+        if 'Brand' not in df_merged.columns:
+            return pd.DataFrame()
+        
+        # Calculate ratio and accuracy
+        df_merged['PO_Rofo_Ratio'] = np.where(
+            df_merged['Forecast_Qty'] > 0,
+            (df_merged['PO_Qty'] / df_merged['Forecast_Qty']) * 100,
+            0
+        )
+        
+        # Categorize
+        conditions = [
+            df_merged['PO_Rofo_Ratio'] < 80,
+            (df_merged['PO_Rofo_Ratio'] >= 80) & (df_merged['PO_Rofo_Ratio'] <= 120),
+            df_merged['PO_Rofo_Ratio'] > 120
+        ]
+        choices = ['Under', 'Accurate', 'Over']
+        df_merged['Accuracy_Status'] = np.select(conditions, choices, default='Unknown')
+        
+        # Calculate brand performance
+        brand_performance = df_merged.groupby('Brand').agg({
+            'SKU_ID': 'count',
+            'Forecast_Qty': 'sum',
+            'PO_Qty': 'sum',
+            'PO_Rofo_Ratio': lambda x: 100 - abs(x - 100).mean()  # Accuracy
+        }).reset_index()
+        
+        brand_performance.columns = ['Brand', 'SKU_Count', 'Total_Forecast', 'Total_PO', 'Accuracy']
+        
+        # Calculate additional metrics
+        brand_performance['PO_vs_Forecast_Ratio'] = (brand_performance['Total_PO'] / brand_performance['Total_Forecast'] * 100)
+        brand_performance['Qty_Difference'] = brand_performance['Total_PO'] - brand_performance['Total_Forecast']
+        
+        # Get status counts
+        status_counts = df_merged.groupby(['Brand', 'Accuracy_Status']).size().unstack(fill_value=0).reset_index()
+        
+        # Merge with performance data
+        brand_performance = pd.merge(brand_performance, status_counts, on='Brand', how='left')
+        
+        # Fill NaN with 0 for status columns
+        for status in ['Under', 'Accurate', 'Over']:
+            if status not in brand_performance.columns:
+                brand_performance[status] = 0
+        
+        # Sort by accuracy
+        brand_performance = brand_performance.sort_values('Accuracy', ascending=False)
+        
+        return brand_performance
+        
+    except Exception as e:
+        st.error(f"Brand performance calculation error: {str(e)}")
+        return pd.DataFrame()
 
 # --- ====================================================== ---
 # ---               DASHBOARD INITIALIZATION               ---
@@ -742,32 +815,62 @@ with st.sidebar:
 
 # --- MAIN DASHBOARD ---
 
-# SECTION 1: LAST 3 MONTHS PERFORMANCE
-st.subheader("📊 Performance Accuracy - 3 Bulan Terakhir")
+# SECTION 1: LAST 3 MONTHS PERFORMANCE (DIPERBESAR)
+st.subheader("🎯 Forecast Performance - 3 Bulan Terakhir")
 
 if last_3_months_performance:
-    # Display last 3 months performance
-    col_l1, col_l2, col_l3 = st.columns(3)
-    
+    # Display last 3 months performance - INI DIPERBESAR
     months_display = []
+    
+    # Create container untuk 3 bulan
+    month_cols = st.columns(3)
+    
     for i, (month, data) in enumerate(sorted(last_3_months_performance.items())):
         month_name = month.strftime('%b %Y')
         accuracy = data['accuracy']
         
-        # Determine which column to use
-        if i == 0:
-            with col_l1:
-                st.markdown(create_monthly_performance_display(last_3_months_performance, month), unsafe_allow_html=True)
-        elif i == 1:
-            with col_l2:
-                st.markdown(create_monthly_performance_display(last_3_months_performance, month), unsafe_allow_html=True)
-        elif i == 2:
-            with col_l3:
-                st.markdown(create_monthly_performance_display(last_3_months_performance, month), unsafe_allow_html=True)
+        with month_cols[i]:
+            st.markdown(f"""
+            <div style="
+                background: white; 
+                border-radius: 15px; 
+                padding: 1.5rem; 
+                margin: 0.5rem 0;
+                box-shadow: 0 6px 20px rgba(0,0,0,0.1);
+                border-top: 5px solid #667eea;
+            ">
+                <div style="text-align: center; margin-bottom: 1rem;">
+                    <h3 style="margin: 0; color: #333;">{month_name}</h3>
+                    <div style="font-size: 2rem; font-weight: 900; color: #667eea;">
+                        {accuracy:.1f}%
+                    </div>
+                    <div style="font-size: 0.9rem; color: #666;">Overall Accuracy</div>
+                </div>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 1rem;">
+                    <div style="text-align: center; padding: 0.5rem; background: #FFEBEE; border-radius: 8px;">
+                        <div style="font-size: 1.5rem; font-weight: 900; color: #F44336;">{data['status_counts'].get('Under', 0)}</div>
+                        <div style="font-size: 0.8rem; color: #F44336;">Under</div>
+                    </div>
+                    <div style="text-align: center; padding: 0.5rem; background: #E8F5E9; border-radius: 8px;">
+                        <div style="font-size: 1.5rem; font-weight: 900; color: #4CAF50;">{data['status_counts'].get('Accurate', 0)}</div>
+                        <div style="font-size: 0.8rem; color: #4CAF50;">Accurate</div>
+                    </div>
+                    <div style="text-align: center; padding: 0.5rem; background: #FFF3E0; border-radius: 8px;">
+                        <div style="font-size: 1.5rem; font-weight: 900; color: #FF9800;">{data['status_counts'].get('Over', 0)}</div>
+                        <div style="font-size: 0.8rem; color: #FF9800;">Over</div>
+                    </div>
+                </div>
+                
+                <div style="text-align: center; font-size: 0.9rem; color: #666;">
+                    Total SKUs: {data['total_records']}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
         
         months_display.append(month_name)
     
-    # Overall metrics for last 3 months
+    # Overall metrics for last 3 months - INI DIKECILKAN
     st.divider()
     
     # Calculate aggregated metrics for last 3 months
@@ -778,47 +881,97 @@ if last_3_months_performance:
     
     avg_accuracy = np.mean([data['accuracy'] for data in last_3_months_performance.values()])
     
-    col_agg1, col_agg2, col_agg3, col_agg4 = st.columns(4)
+    # TOTAL ROFO DAN PO BULAN TERAKHIR (TAMBAHAN BARU)
+    if monthly_performance:
+        last_month = sorted(monthly_performance.keys())[-1]
+        last_month_data = monthly_performance[last_month]['data']
+        
+        total_rofo_last_month = last_month_data['Forecast_Qty'].sum()
+        total_po_last_month = last_month_data['PO_Qty'].sum()
+        selisih_qty = total_po_last_month - total_rofo_last_month
+        selisih_persen = (selisih_qty / total_rofo_last_month * 100) if total_rofo_last_month > 0 else 0
     
-    with col_agg1:
+    # Layout baru untuk summary metrics (lebih kecil)
+    col_sum1, col_sum2, col_sum3, col_sum4 = st.columns(4)
+    
+    with col_sum1:
         under_pct = (total_under / total_skus * 100) if total_skus > 0 else 0
         st.markdown(f"""
-        <div class="status-indicator status-under">
-            <div style="font-size: 1.1rem; font-weight: 800;">TOTAL UNDER</div>
-            <div style="font-size: 2.2rem; font-weight: 900;">{total_under}</div>
-            <div style="font-size: 0.9rem;">{under_pct:.1f}% of total</div>
+        <div style="background: white; border-radius: 10px; padding: 1rem; box-shadow: 0 4px 12px rgba(0,0,0,0.08);">
+            <div style="font-size: 0.9rem; color: #666; margin-bottom: 0.5rem;">TOTAL UNDER</div>
+            <div style="font-size: 1.8rem; font-weight: 800; color: #F44336;">{total_under}</div>
+            <div style="font-size: 0.8rem; color: #888;">{under_pct:.1f}%</div>
         </div>
         """, unsafe_allow_html=True)
     
-    with col_agg2:
+    with col_sum2:
         accurate_pct = (total_accurate / total_skus * 100) if total_skus > 0 else 0
         st.markdown(f"""
-        <div class="status-indicator status-accurate">
-            <div style="font-size: 1.1rem; font-weight: 800;">TOTAL ACCURATE</div>
-            <div style="font-size: 2.2rem; font-weight: 900;">{total_accurate}</div>
-            <div style="font-size: 0.9rem;">{accurate_pct:.1f}% of total</div>
+        <div style="background: white; border-radius: 10px; padding: 1rem; box-shadow: 0 4px 12px rgba(0,0,0,0.08);">
+            <div style="font-size: 0.9rem; color: #666; margin-bottom: 0.5rem;">TOTAL ACCURATE</div>
+            <div style="font-size: 1.8rem; font-weight: 800; color: #4CAF50;">{total_accurate}</div>
+            <div style="font-size: 0.8rem; color: #888;">{accurate_pct:.1f}%</div>
         </div>
         """, unsafe_allow_html=True)
     
-    with col_agg3:
+    with col_sum3:
         over_pct = (total_over / total_skus * 100) if total_skus > 0 else 0
         st.markdown(f"""
-        <div class="status-indicator status-over">
-            <div style="font-size: 1.1rem; font-weight: 800;">TOTAL OVER</div>
-            <div style="font-size: 2.2rem; font-weight: 900;">{total_over}</div>
-            <div style="font-size: 0.9rem;">{over_pct:.1f}% of total</div>
+        <div style="background: white; border-radius: 10px; padding: 1rem; box-shadow: 0 4px 12px rgba(0,0,0,0.08);">
+            <div style="font-size: 0.9rem; color: #666; margin-bottom: 0.5rem;">TOTAL OVER</div>
+            <div style="font-size: 1.8rem; font-weight: 800; color: #FF9800;">{total_over}</div>
+            <div style="font-size: 0.8rem; color: #888;">{over_pct:.1f}%</div>
         </div>
         """, unsafe_allow_html=True)
     
-    with col_agg4:
+    with col_sum4:
         st.markdown(f"""
-        <div class="metric-highlight">
-            <div style="font-size: 0.9rem; color: #666;">AVERAGE ACCURACY</div>
-            <div style="font-size: 2rem; font-weight: 900; color: #667eea;">{avg_accuracy:.1f}%</div>
-            <div style="font-size: 0.8rem; color: #888;">{total_skus} total records</div>
-            <div style="font-size: 0.8rem; color: #888;">3 months period</div>
+        <div style="background: white; border-radius: 10px; padding: 1rem; box-shadow: 0 4px 12px rgba(0,0,0,0.08);">
+            <div style="font-size: 0.9rem; color: #666; margin-bottom: 0.5rem;">AVG ACCURACY</div>
+            <div style="font-size: 1.8rem; font-weight: 800; color: #667eea;">{avg_accuracy:.1f}%</div>
+            <div style="font-size: 0.8rem; color: #888;">{total_skus} records</div>
         </div>
         """, unsafe_allow_html=True)
+    
+    # ROW BARU UNTUK TOTAL ROFO, PO, SELISIH (TAMBAHAN)
+    st.divider()
+    st.subheader("📊 Total Rofo vs PO - Bulan Terakhir")
+    
+    rofo_col1, rofo_col2, rofo_col3, rofo_col4 = st.columns(4)
+    
+    with rofo_col1:
+        st.metric(
+            "Total Rofo Qty",
+            f"{total_rofo_last_month:,.0f}",
+            help="Total quantity dari forecast/Rofo bulan terakhir"
+        )
+    
+    with rofo_col2:
+        st.metric(
+            "Total PO Qty", 
+            f"{total_po_last_month:,.0f}",
+            help="Total quantity dari Purchase Order bulan terakhir"
+        )
+    
+    with rofo_col3:
+        st.metric(
+            "Selisih Qty",
+            f"{selisih_qty:+,.0f}",
+            f"{selisih_persen:+.1f}%",
+            delta_color="normal" if abs(selisih_persen) < 20 else "off",
+            help="Selisih antara PO dan Rofo (POSITIVE = PO > Rofo)"
+        )
+    
+    with rofo_col4:
+        accurate_count = last_month_data[last_month_data['Accuracy_Status'] == 'Accurate']['SKU_ID'].nunique()
+        total_count = last_month_data['SKU_ID'].nunique()
+        accurate_pct_last_month = (accurate_count / total_count * 100) if total_count > 0 else 0
+        st.metric(
+            "Accurate SKUs",
+            f"{accurate_count}",
+            f"{accurate_pct_last_month:.1f}%",
+            help="Jumlah SKU dengan accuracy 80-120% di bulan terakhir"
+        )
 
 else:
     st.warning("⚠️ Insufficient data for monthly performance analysis")
@@ -847,9 +1000,10 @@ if monthly_performance:
                     inventory_data = inventory_metrics['inventory_df'][['SKU_ID', 'Stock_Qty', 'Avg_Monthly_Sales_3M', 'Cover_Months']]
                     under_skus_df = pd.merge(under_skus_df, inventory_data, on='SKU_ID', how='left')
                 
-                # Prepare display columns
-                display_cols = ['SKU_ID', 'Product_Name', 'Brand', 'SKU_Tier', 'Forecast_Qty', 'PO_Qty', 
-                              'PO_Rofo_Ratio', 'Stock_Qty', 'Avg_Monthly_Sales_3M', 'Cover_Months']
+                # Prepare display columns - TAMBAHKAN Product_Name, Brand, Status
+                display_cols = ['SKU_ID', 'Product_Name', 'Brand', 'SKU_Tier', 'Accuracy_Status',
+                               'Forecast_Qty', 'PO_Qty', 'PO_Rofo_Ratio', 
+                               'Stock_Qty', 'Avg_Monthly_Sales_3M', 'Cover_Months']
                 
                 # Filter available columns
                 available_cols = [col for col in display_cols if col in under_skus_df.columns]
@@ -873,6 +1027,7 @@ if monthly_performance:
                     'Product_Name': 'Product Name',
                     'Brand': 'Brand',
                     'SKU_Tier': 'Tier',
+                    'Accuracy_Status': 'Status',
                     'Forecast_Qty': 'Forecast Qty',
                     'PO_Qty': 'PO Qty',
                     'PO_Rofo_Ratio': 'PO/Rofo %',
@@ -890,7 +1045,17 @@ if monthly_performance:
                 )
                 
                 # Summary
-                st.caption(f"**Total UNDER Forecast SKUs:** {len(under_skus_df)} | **Average PO/Rofo Ratio:** {under_skus_df['PO_Rofo_Ratio'].mean():.1f}%")
+                total_forecast = under_skus_df['Forecast_Qty'].sum()
+                total_po = under_skus_df['PO_Qty'].sum()
+                avg_ratio = under_skus_df['PO_Rofo_Ratio'].mean()
+                
+                st.caption(f"""
+                **Total UNDER Forecast SKUs:** {len(under_skus_df)} | 
+                **Average PO/Rofo Ratio:** {avg_ratio:.1f}% | 
+                **Total Forecast:** {total_forecast:,.0f} | 
+                **Total PO:** {total_po:,.0f} | 
+                **Selisih:** {total_po - total_forecast:+,.0f} ({((total_po - total_forecast)/total_forecast*100 if total_forecast > 0 else 0):+.1f}%)
+                """)
             else:
                 st.success(f"✅ No SKUs with UNDER forecast in {last_month_name}")
         
@@ -902,9 +1067,10 @@ if monthly_performance:
                     inventory_data = inventory_metrics['inventory_df'][['SKU_ID', 'Stock_Qty', 'Avg_Monthly_Sales_3M', 'Cover_Months']]
                     over_skus_df = pd.merge(over_skus_df, inventory_data, on='SKU_ID', how='left')
                 
-                # Prepare display columns
-                display_cols = ['SKU_ID', 'Product_Name', 'Brand', 'SKU_Tier', 'Forecast_Qty', 'PO_Qty', 
-                              'PO_Rofo_Ratio', 'Stock_Qty', 'Avg_Monthly_Sales_3M', 'Cover_Months']
+                # Prepare display columns - TAMBAHKAN Product_Name, Brand, Status
+                display_cols = ['SKU_ID', 'Product_Name', 'Brand', 'SKU_Tier', 'Accuracy_Status',
+                               'Forecast_Qty', 'PO_Qty', 'PO_Rofo_Ratio', 
+                               'Stock_Qty', 'Avg_Monthly_Sales_3M', 'Cover_Months']
                 
                 # Filter available columns
                 available_cols = [col for col in display_cols if col in over_skus_df.columns]
@@ -928,6 +1094,7 @@ if monthly_performance:
                     'Product_Name': 'Product Name',
                     'Brand': 'Brand',
                     'SKU_Tier': 'Tier',
+                    'Accuracy_Status': 'Status',
                     'Forecast_Qty': 'Forecast Qty',
                     'PO_Qty': 'PO Qty',
                     'PO_Rofo_Ratio': 'PO/Rofo %',
@@ -945,7 +1112,17 @@ if monthly_performance:
                 )
                 
                 # Summary
-                st.caption(f"**Total OVER Forecast SKUs:** {len(over_skus_df)} | **Average PO/Rofo Ratio:** {over_skus_df['PO_Rofo_Ratio'].mean():.1f}%")
+                total_forecast = over_skus_df['Forecast_Qty'].sum()
+                total_po = over_skus_df['PO_Qty'].sum()
+                avg_ratio = over_skus_df['PO_Rofo_Ratio'].mean()
+                
+                st.caption(f"""
+                **Total OVER Forecast SKUs:** {len(over_skus_df)} | 
+                **Average PO/Rofo Ratio:** {avg_ratio:.1f}% | 
+                **Total Forecast:** {total_forecast:,.0f} | 
+                **Total PO:** {total_po:,.0f} | 
+                **Selisih:** {total_po - total_forecast:+,.0f} ({((total_po - total_forecast)/total_forecast*100 if total_forecast > 0 else 0):+.1f}%)
+                """)
             else:
                 st.success(f"✅ No SKUs with OVER forecast in {last_month_name}")
 
@@ -1011,6 +1188,61 @@ with tab1:
         ).properties(height=400)
         
         st.altair_chart(trend_chart, use_container_width=True)
+        
+        # Brand Performance Analysis
+        st.divider()
+        st.subheader("🏷️ Forecast Performance by Brand")
+        
+        brand_performance = calculate_brand_performance(df_forecast, df_po, df_product)
+        
+        if not brand_performance.empty:
+            # Format the display
+            display_brand_df = brand_performance.copy()
+            
+            # Format columns
+            display_brand_df['Accuracy'] = display_brand_df['Accuracy'].apply(lambda x: f"{x:.1f}%")
+            display_brand_df['PO_vs_Forecast_Ratio'] = display_brand_df['PO_vs_Forecast_Ratio'].apply(lambda x: f"{x:.1f}%")
+            display_brand_df['Total_Forecast'] = display_brand_df['Total_Forecast'].apply(lambda x: f"{x:,.0f}")
+            display_brand_df['Total_PO'] = display_brand_df['Total_PO'].apply(lambda x: f"{x:,.0f}")
+            display_brand_df['Qty_Difference'] = display_brand_df['Qty_Difference'].apply(lambda x: f"{x:+,.0f}")
+            
+            # Rename columns
+            column_names = {
+                'Brand': 'Brand',
+                'SKU_Count': 'SKU Count',
+                'Total_Forecast': 'Total Rofo',
+                'Total_PO': 'Total PO',
+                'Accuracy': 'Accuracy %',
+                'PO_vs_Forecast_Ratio': 'PO/Rofo %',
+                'Qty_Difference': 'Qty Diff',
+                'Under': 'Under',
+                'Accurate': 'Accurate',
+                'Over': 'Over'
+            }
+            
+            display_brand_df = display_brand_df.rename(columns=column_names)
+            
+            # Display table
+            st.dataframe(
+                display_brand_df,
+                use_container_width=True,
+                height=400
+            )
+            
+            # Chart for brand accuracy
+            chart_brand_df = brand_performance.copy()
+            
+            # Create bar chart
+            bars_brand = alt.Chart(chart_brand_df).mark_bar().encode(
+                x=alt.X('Brand:N', title='Brand', sort='-y'),
+                y=alt.Y('Accuracy:Q', title='Accuracy (%)'),
+                color=alt.Color('Brand:N', scale=alt.Scale(scheme='set3')),
+                tooltip=['Brand', 'Accuracy', 'SKU_Count', 'Total_Forecast', 'Total_PO']
+            ).properties(height=300)
+            
+            st.altair_chart(bars_brand, use_container_width=True)
+        else:
+            st.info("📊 No brand performance data available")
 
 # --- TAB 2: TIER ANALYSIS ---
 with tab2:
