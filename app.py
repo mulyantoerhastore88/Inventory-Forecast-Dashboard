@@ -116,7 +116,6 @@ def load_and_process_data(_client):
     gsheet_url = st.secrets["gsheet_url"]
     data = {}
     try:
-        # Product Master
         ws = _client.open_by_url(gsheet_url).worksheet("Product_Master")
         df_p = pd.DataFrame(ws.get_all_records())
         df_p.columns = [c.strip().replace(' ', '_') for c in df_p.columns]
@@ -135,7 +134,6 @@ def load_and_process_data(_client):
             df_long = df_temp[['SKU_ID'] + m_cols].melt(id_vars=['SKU_ID'], value_vars=m_cols, var_name='Month_Label', value_name=val_col)
             df_long[val_col] = pd.to_numeric(df_long[val_col], errors='coerce').fillna(0)
             df_long['Month'] = df_long['Month_Label'].apply(parse_month_label)
-            df_long['Month'] = pd.to_datetime(df_long['Month'])
             return df_long[df_long['SKU_ID'].isin(active_ids)]
 
         data['sales'] = robust_melt("Sales", "Sales_Qty")
@@ -158,12 +156,19 @@ def load_and_process_data(_client):
         return data
     except Exception as e: st.error(f"Error Loading: {e}"); return {}
 
-# --- 2. ANALYTICS ENGINE ---
+# --- 2. ANALYTICS ENGINE (BUG FIX HERE) ---
 def calculate_monthly_performance(df_forecast, df_po, df_product):
     if df_forecast.empty or df_po.empty: return {}
-    df_forecast['Month'] = pd.to_datetime(df_forecast['Month'])
-    df_po['Month'] = pd.to_datetime(df_po['Month'])
-    df_merged = pd.merge(df_forecast, df_po, on=['SKU_ID', 'Month'], how='inner')
+    
+    # --- BUG FIX: Create Copies & Force Datetime BEFORE Merge ---
+    df_f = df_forecast.copy()
+    df_p = df_po.copy()
+    
+    df_f['Month'] = pd.to_datetime(df_f['Month'], errors='coerce')
+    df_p['Month'] = pd.to_datetime(df_p['Month'], errors='coerce')
+    
+    # Now merge safe
+    df_merged = pd.merge(df_f, df_p, on=['SKU_ID', 'Month'], how='inner')
     
     if not df_product.empty:
         meta = df_product[['SKU_ID', 'Product_Name', 'SKU_Tier', 'Brand', 'Status']].rename(columns={'Status':'Prod_Status'})
@@ -194,14 +199,11 @@ def calculate_monthly_performance(df_forecast, df_po, df_product):
 
 def calculate_inventory_metrics(df_stock, df_sales, df_product):
     if df_stock.empty: return pd.DataFrame()
-    
-    # Calculate 3-Month Average & Get Last 3 Months Sum
     if not df_sales.empty:
-        df_sales['Month'] = pd.to_datetime(df_sales['Month'])
-        months = sorted(df_sales['Month'].unique())[-3:]
-        sales_3m = df_sales[df_sales['Month'].isin(months)]
-        
-        # Avg Sales
+        df_s = df_sales.copy() # Work on copy
+        df_s['Month'] = pd.to_datetime(df_s['Month'], errors='coerce')
+        months = sorted(df_s['Month'].unique())[-3:]
+        sales_3m = df_s[df_s['Month'].isin(months)]
         avg_sales = sales_3m.groupby('SKU_ID')['Sales_Qty'].mean().reset_index(name='Avg_Sales_3M')
         avg_sales['Avg_Sales_3M'] = avg_sales['Avg_Sales_3M'].round(0).astype(int)
     else:
@@ -221,13 +223,11 @@ def calculate_inventory_metrics(df_stock, df_sales, df_product):
     )
     
     # Actionable Quantities
-    # Target Ideal Max = 1.5, Min = 0.8
     inv['Qty_to_Reduce'] = np.where(
         inv['Status_Stock'] == 'High Stock',
         inv['Stock_Qty'] - (1.5 * inv['Avg_Sales_3M']),
         0
     ).astype(int)
-    # Ensure no negative
     inv['Qty_to_Reduce'] = np.where(inv['Qty_to_Reduce'] < 0, 0, inv['Qty_to_Reduce'])
     
     inv['Qty_to_Order'] = np.where(
@@ -240,16 +240,13 @@ def calculate_inventory_metrics(df_stock, df_sales, df_product):
     return inv
 
 def get_last_3m_sales_pivot(df_sales):
-    """Mendapatkan pivot sales 3 bulan terakhir (Jan, Feb, Mar) per SKU"""
     if df_sales.empty: return pd.DataFrame(), []
-    df_sales['Month'] = pd.to_datetime(df_sales['Month'])
-    last_3_months = sorted(df_sales['Month'].unique())[-3:]
-    df_3m = df_sales[df_sales['Month'].isin(last_3_months)].copy()
+    df_s = df_sales.copy()
+    df_s['Month'] = pd.to_datetime(df_s['Month'], errors='coerce')
+    last_3_months = sorted(df_s['Month'].unique())[-3:]
+    df_3m = df_s[df_s['Month'].isin(last_3_months)].copy()
     
-    # Pivot agar bulan jadi kolom
     df_pivot = df_3m.pivot_table(index='SKU_ID', columns='Month', values='Sales_Qty', aggfunc='sum').reset_index()
-    
-    # Rename columns to just Month Name
     cols_map = {c: c.strftime('%b') for c in df_pivot.columns if isinstance(c, datetime)}
     df_pivot = df_pivot.rename(columns=cols_map)
     df_pivot = df_pivot.fillna(0)
@@ -275,7 +272,6 @@ tab1, tab2, tab3 = st.tabs(["📊 Performance Dashboard", "📦 Inventory Analys
 # ==========================================
 with tab1:
     if monthly_perf:
-        # A. MONTHLY CARDS (TOP)
         st.subheader("📅 Performance Trend (3 Bulan Terakhir)")
         
         last_3_months = sorted(monthly_perf.keys())[-3:]
@@ -297,108 +293,87 @@ with tab1:
                 </div>
                 """, unsafe_allow_html=True)
 
-        # B. TOTAL SUMMARY (MIDDLE)
-        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown("---")
+        c_left, c_right = st.columns([1, 1])
+        
         last_month = last_3_months[-1]
         lm_data = monthly_perf[last_month]['data']
         
-        st.subheader(f"📊 Total Metrics ({last_month.strftime('%b %Y')})")
-        grp = lm_data['Status_Rofo'].value_counts()
-        
-        # Render Solid Cards
-        r1, r2, r3, r4 = st.columns(4)
-        with r1: st.markdown(f'<div class="summary-card bg-red"><div class="sum-title">UNDER</div><div class="sum-val">{grp.get("Under",0)}</div></div>', unsafe_allow_html=True)
-        with r2: st.markdown(f'<div class="summary-card bg-green"><div class="sum-title">ACCURATE</div><div class="sum-val">{grp.get("Accurate",0)}</div></div>', unsafe_allow_html=True)
-        with r3: st.markdown(f'<div class="summary-card bg-orange"><div class="sum-title">OVER</div><div class="sum-val">{grp.get("Over",0)}</div></div>', unsafe_allow_html=True)
-        with r4: st.markdown(f'<div class="summary-card bg-gray"><div class="sum-title">NO ROFO</div><div class="sum-val">{grp.get("No Rofo",0)}</div></div>', unsafe_allow_html=True)
-
-        # C. TIER ANALYSIS (BELOW TOTAL)
-        st.markdown("---")
-        st.subheader("🏷️ Tier Analysis")
-        c1, c2 = st.columns([1, 1])
-        with c1:
+        with c_left:
+            st.subheader(f"📊 Total Metrics ({last_month.strftime('%b')})")
+            grp = lm_data['Status_Rofo'].value_counts()
+            
+            r1, r2, r3, r4 = st.columns(4)
+            with r1: st.markdown(f'<div class="summary-card bg-red"><div class="sum-title">UNDER</div><div class="sum-val">{grp.get("Under",0)}</div></div>', unsafe_allow_html=True)
+            with r2: st.markdown(f'<div class="summary-card bg-green"><div class="sum-title">ACCURATE</div><div class="sum-val">{grp.get("Accurate",0)}</div></div>', unsafe_allow_html=True)
+            with r3: st.markdown(f'<div class="summary-card bg-orange"><div class="sum-title">OVER</div><div class="sum-val">{grp.get("Over",0)}</div></div>', unsafe_allow_html=True)
+            with r4: st.markdown(f'<div class="summary-card bg-gray"><div class="sum-title">NO ROFO</div><div class="sum-val">{grp.get("No Rofo",0)}</div></div>', unsafe_allow_html=True)
+                
+        with c_right:
+            st.subheader("📊 Tier Analysis")
             tier_df = lm_data.dropna(subset=['SKU_Tier'])
             tier_agg = tier_df.groupby(['SKU_Tier', 'Status_Rofo']).size().reset_index(name='Count')
             fig = px.bar(tier_agg, x='SKU_Tier', y='Count', color='Status_Rofo',
                          color_discrete_map={'Under':'#e55039', 'Accurate':'#38ada9', 'Over':'#f6b93b', 'No Rofo':'#95a5a6'},
-                         height=300, title="Distribution by Tier")
+                         height=250)
+            fig.update_layout(margin=dict(t=0, b=0, l=0, r=0))
             st.plotly_chart(fig, use_container_width=True)
-        with c2:
-            # Summary Table per Tier
-            tier_sum = tier_df.groupby(['SKU_Tier', 'Status_Rofo']).size().unstack(fill_value=0)
-            tier_sum['Total'] = tier_sum.sum(axis=1)
-            tier_sum['Acc %'] = (tier_sum.get('Accurate', 0) / tier_sum['Total'] * 100).round(1)
-            st.dataframe(tier_sum.sort_values('Acc %', ascending=False), use_container_width=True)
 
-        # D. EVALUASI ROFO TABLE (BOTTOM)
         st.markdown("---")
         st.subheader(f"📋 Evaluasi Rofo - {last_month.strftime('%b %Y')}")
         
-        # Prepare Data
         base_eval = pd.merge(lm_data, inv_df[['SKU_ID', 'Stock_Qty', 'Avg_Sales_3M']], on='SKU_ID', how='left')
         
-        # Merge with Sales 3 Months (Jan, Feb, Mar columns)
         if not sales_pivot.empty:
             base_eval = pd.merge(base_eval, sales_pivot, on='SKU_ID', how='left')
             for col in sales_months_names:
                 if col in base_eval.columns:
                     base_eval[col] = base_eval[col].fillna(0).astype(int)
         
-        # Column Selection & Rename
-        disp_cols = ['SKU_ID', 'Product_Name', 'Brand', 'SKU_Tier', 'Prod_Status', 'Status_Rofo', 
-                     'Forecast_Qty', 'PO_Qty', 'Ratio', 'Stock_Qty', 'Avg_Sales_3M'] + sales_months_names
+        sales_cols = [c for c in base_eval.columns if c in sales_months_names]
+        final_cols = ['SKU_ID', 'Product_Name', 'Brand', 'SKU_Tier', 'Prod_Status', 'Status_Rofo', 
+                      'Forecast_Qty', 'PO_Qty', 'Ratio', 'Stock_Qty', 'Avg_Sales_3M'] + sales_cols
         
-        # Filter existing columns only
-        disp_cols = [c for c in disp_cols if c in base_eval.columns]
+        final_cols = [c for c in final_cols if c in base_eval.columns]
         
-        df_display = base_eval[disp_cols].rename(columns={
+        df_display = base_eval[final_cols].rename(columns={
             'Prod_Status': 'Product Status',
-            'Status_Rofo': 'Status Rofo',
-            'Forecast_Qty': 'Forecast Qty',
-            'PO_Qty': 'PO Qty',
             'Ratio': 'Achv %',
             'Stock_Qty': 'Stock',
             'Avg_Sales_3M': 'Avg Sales (3M)'
         })
         
-        # Tabs for filtering
         t_all, t_under, t_over, t_nr = st.tabs(["All SKU", "Under Forecast", "Over Forecast", "No Rofo"])
-        
         cfg = {
             "Achv %": st.column_config.NumberColumn(format="%.0f%%"),
             "Stock": st.column_config.NumberColumn(format="%d"),
             "Avg Sales (3M)": st.column_config.NumberColumn(format="%d")
         }
         
-        with t_all: st.dataframe(df_display, column_config=cfg, use_container_width=True)
-        with t_under: st.dataframe(df_display[df_display['Status Rofo']=='Under'], column_config=cfg, use_container_width=True)
-        with t_over: st.dataframe(df_display[df_display['Status Rofo']=='Over'], column_config=cfg, use_container_width=True)
-        with t_nr: st.dataframe(df_display[df_display['Status Rofo']=='No Rofo'], column_config=cfg, use_container_width=True)
-
+        with t_all: st.dataframe(df_display, column_config=cfg, use_container_width=True, height=500)
+        with t_under: st.dataframe(df_display[df_display['Status_Rofo']=='Under'], column_config=cfg, use_container_width=True)
+        with t_over: st.dataframe(df_display[df_display['Status_Rofo']=='Over'], column_config=cfg, use_container_width=True)
+        with t_nr: st.dataframe(df_display[df_display['Status_Rofo']=='No Rofo'], column_config=cfg, use_container_width=True)
     else:
         st.warning("Data belum tersedia.")
 
 # ==========================================
-# TAB 2: INVENTORY ANALYSIS (VISUAL UPGRADE)
+# TAB 2: INVENTORY ANALYSIS
 # ==========================================
 with tab2:
     st.subheader("📦 Inventory Overview")
     
     if not inv_df.empty:
-        # 1. METRICS ROW
-        # Get Sales per month for last 3 months
         s_months_data = {}
         if 'sales' in all_data and not all_data['sales'].empty:
-            sales_df = all_data['sales']
-            months = sorted(sales_df['Month'].unique())[-3:]
+            sales_df = all_data['sales'].copy()
+            sales_df['Month'] = pd.to_datetime(sales_df['Month'], errors='coerce')
+            months = sorted(sales_df['Month'].dropna().unique())[-3:]
             for m in months:
                 qty = sales_df[sales_df['Month']==m]['Sales_Qty'].sum()
                 s_months_data[m.strftime('%b')] = qty
                 
-        # Layout Metrics
         m1, m2, m3, m4 = st.columns(4)
-        
-        # Sales per month
         idx = 0
         for m_name, qty in s_months_data.items():
             if idx == 0: with m1: st.metric(f"Sales {m_name}", f"{qty:,.0f}")
@@ -409,12 +384,10 @@ with tab2:
         with m4: st.metric("Total Stock", f"{inv_df['Stock_Qty'].sum():,.0f}")
         
         st.markdown("---")
-        
-        # 2. DONUT CHART & ACTIONABLE SUMMARY
         c_chart, c_table = st.columns([1, 2])
         
         with c_chart:
-            st.markdown("##### Stock Status Distribution")
+            st.markdown("##### Stock Status")
             status_count = inv_df['Status_Stock'].value_counts().reset_index()
             status_count.columns = ['Status', 'Count']
             fig_don = px.pie(status_count, values='Count', names='Status', hole=0.5, 
@@ -425,7 +398,6 @@ with tab2:
             
         with c_table:
             st.markdown("##### Actionable Summary per Tier")
-            # Calculate Qty to Reduce/Order per Tier
             if 'SKU_Tier' in inv_df.columns:
                 tier_act = inv_df.groupby('SKU_Tier').agg({
                     'Qty_to_Order': 'sum',
@@ -436,14 +408,9 @@ with tab2:
                     "Qty_to_Reduce": st.column_config.NumberColumn("Qty to Reduce (High)", format="%d")
                 }, use_container_width=True, height=300)
 
-        # 3. DETAIL TABLE
         st.markdown("---")
         st.subheader("📋 Inventory Detail SKU")
-        
-        # Filter Logic
         fil_stat = st.multiselect("Filter Status", inv_df['Status_Stock'].unique(), default=['Need Replenishment', 'High Stock'])
-        
-        # Kolom sesuai request
         view_cols = ['SKU_ID', 'Product_Name', 'Brand', 'SKU_Tier', 'Prod_Status', 'Stock_Qty', 'Avg_Sales_3M', 'Cover_Months', 'Status_Stock']
         view_cols = [c for c in view_cols if c in inv_df.columns]
         
@@ -455,29 +422,21 @@ with tab2:
             'Status_Stock': 'Status Stock'
         })
         
-        st.dataframe(
-            inv_show.sort_values('Cover Month', ascending=False),
-            column_config={
-                "Avg Sales (3M)": st.column_config.NumberColumn(format="%d"),
-                "Cover Month": st.column_config.NumberColumn(format="%.1f"),
-                "Stock Qty": st.column_config.NumberColumn(format="%d")
-            },
-            use_container_width=True, height=600
-        )
-    else:
-        st.warning("Data Inventory/Sales belum lengkap.")
+        st.dataframe(inv_show.sort_values('Cover Month', ascending=False),
+                     column_config={"Avg Sales (3M)": st.column_config.NumberColumn(format="%d"),
+                                    "Cover Month": st.column_config.NumberColumn(format="%.1f"),
+                                    "Stock Qty": st.column_config.NumberColumn(format="%d")},
+                     use_container_width=True, height=600)
+    else: st.warning("Data Inventory belum lengkap.")
 
 # ==========================================
-# TAB 3: SALES ANALYSIS (REVAMP TOTAL)
+# TAB 3: SALES ANALYSIS
 # ==========================================
 with tab3:
     st.subheader("📈 Sales vs Forecast Analysis")
-    
     if 'sales' in all_data and 'forecast' in all_data:
-        # A. CHART TOTAL SALES VS FORECAST (ALL MONTHS)
         s_agg = all_data['sales'].groupby('Month')['Sales_Qty'].sum().reset_index()
         f_agg = all_data['forecast'].groupby('Month')['Forecast_Qty'].sum().reset_index()
-        
         combo = pd.merge(s_agg, f_agg, on='Month', how='outer').fillna(0)
         combo_melt = combo.melt('Month', var_name='Type', value_name='Qty')
         
@@ -486,18 +445,13 @@ with tab3:
                            color_discrete_map={'Sales_Qty':'#1e3799', 'Forecast_Qty':'#82ccdd'})
         st.plotly_chart(fig_trend, use_container_width=True)
         
-        # B. BRAND FILTERED CHART
         st.markdown("---")
         st.markdown("##### 🔍 Filter Trend by Brand")
-        
-        # Filter Widget
         brands = sorted(all_data['product']['Brand'].unique().tolist()) if not all_data['product'].empty else []
         sel_brand = st.selectbox("Select Brand", ["All"] + brands)
         
-        # Logic Filter Data
-        s_raw = all_data['sales']
-        f_raw = all_data['forecast']
-        
+        s_raw = all_data['sales'].copy()
+        f_raw = all_data['forecast'].copy()
         if sel_brand != "All" and not all_data['product'].empty:
             brand_skus = all_data['product'][all_data['product']['Brand'] == sel_brand]['SKU_ID'].tolist()
             s_raw = s_raw[s_raw['SKU_ID'].isin(brand_skus)]
@@ -506,60 +460,38 @@ with tab3:
         s_agg_b = s_raw.groupby('Month')['Sales_Qty'].sum().reset_index()
         f_agg_b = f_raw.groupby('Month')['Forecast_Qty'].sum().reset_index()
         combo_b = pd.merge(s_agg_b, f_agg_b, on='Month', how='outer').fillna(0)
-        
         fig_b = px.line(combo_b, x='Month', y=['Sales_Qty', 'Forecast_Qty'], markers=True,
-                        title=f"Trend for Brand: {sel_brand}",
-                        color_discrete_map={'Sales_Qty':'#1e3799', 'Forecast_Qty':'#e55039'})
+                        title=f"Trend for Brand: {sel_brand}", color_discrete_map={'Sales_Qty':'#1e3799', 'Forecast_Qty':'#e55039'})
         st.plotly_chart(fig_b, use_container_width=True)
         
-        # C. DETAIL SKU TABLE
         st.markdown("---")
         st.subheader("📋 Detail SKU Sales vs Forecast (3 Bulan Terakhir)")
-        
-        # Pivot Last 3 Months
         last_3m = sorted(s_raw['Month'].unique())[-3:]
-        
-        # 1. Sales Pivot
         s_3m = s_raw[s_raw['Month'].isin(last_3m)]
         s_piv = s_3m.pivot_table(index='SKU_ID', columns='Month', values='Sales_Qty', aggfunc='sum').reset_index()
         s_piv.columns = ['SKU_ID'] + [f"Sales {c.strftime('%b')}" for c in s_piv.columns if isinstance(c, datetime)]
         
-        # 2. Forecast Pivot
         f_3m = f_raw[f_raw['Month'].isin(last_3m)]
         f_piv = f_3m.pivot_table(index='SKU_ID', columns='Month', values='Forecast_Qty', aggfunc='sum').reset_index()
         f_piv.columns = ['SKU_ID'] + [f"Fc {c.strftime('%b')}" for c in f_piv.columns if isinstance(c, datetime)]
         
-        # 3. Merge
         det = pd.merge(s_piv, f_piv, on='SKU_ID', how='outer').fillna(0)
-        
-        # 4. Metadata
         if not all_data['product'].empty:
             det = pd.merge(det, all_data['product'][['SKU_ID', 'Product_Name', 'Brand', 'SKU_Tier', 'Status']], on='SKU_ID', how='left')
             det = det.rename(columns={'Status':'Product Status'})
-        
-        # 5. Calculate Total & Dev
+            
         sales_cols = [c for c in det.columns if c.startswith('Sales ')]
         fc_cols = [c for c in det.columns if c.startswith('Fc ')]
-        
         det['Total Sales 3M'] = det[sales_cols].sum(axis=1)
         det['Total Fc 3M'] = det[fc_cols].sum(axis=1)
         det['Dev %'] = np.where(det['Total Fc 3M']>0, (det['Total Sales 3M']-det['Total Fc 3M'])/det['Total Fc 3M']*100, 0)
         
-        # Column Ordering
-        meta_cols = ['SKU_ID', 'Product_Name', 'Brand', 'SKU_Tier', 'Product Status']
-        final_cols = meta_cols + sales_cols + fc_cols + ['Dev %']
+        final_cols = ['SKU_ID', 'Product_Name', 'Brand', 'SKU_Tier', 'Product Status'] + sales_cols + fc_cols + ['Dev %']
         final_cols = [c for c in final_cols if c in det.columns]
         
-        st.dataframe(
-            det[final_cols].sort_values('Dev %', ascending=True),
-            column_config={"Dev %": st.column_config.NumberColumn(format="%.1f%%")},
-            use_container_width=True
-        )
+        st.dataframe(det[final_cols].sort_values('Dev %', ascending=True), column_config={"Dev %": st.column_config.NumberColumn(format="%.1f%%")}, use_container_width=True)
 
 # --- SIDEBAR ---
 with st.sidebar:
     st.header("⚙️ Control")
-    if st.button("🔄 Refresh Data", use_container_width=True):
-        st.cache_data.clear()
-        st.rerun()
-    st.info("V10.0 Final Polished")
+    if st.button("🔄 Refresh Data"): st.cache_data.clear(); st.rerun()
