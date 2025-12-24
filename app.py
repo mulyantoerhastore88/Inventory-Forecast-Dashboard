@@ -9,13 +9,13 @@ import gspread
 from google.oauth2.service_account import Credentials
 import warnings
 import io
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 warnings.filterwarnings('ignore')
 
 # --- Konfigurasi Halaman ---
 st.set_page_config(
-    page_title="Inventory Intelligence Pro V12",
-    page_icon="💎",
+    page_title="Inventory Intelligence Pro V13",
+    page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -60,6 +60,7 @@ st.markdown("""
     .bg-blue { background: linear-gradient(135deg, #4a69bd 0%, #1e3799 100%); }
     .bg-purple { background: linear-gradient(135deg, #8e44ad 0%, #6c5ce7 100%); }
     .bg-teal { background: linear-gradient(135deg, #00cec9 0%, #00b894 100%); }
+    .bg-pink { background: linear-gradient(135deg, #fd79a8 0%, #e84393 100%); }
     
     .sum-val { font-size: 2.5rem; font-weight: 800; margin: 5px 0; line-height: 1; }
     .sum-title { font-size: 0.8rem; font-weight: 700; text-transform: uppercase; opacity: 0.9; letter-spacing: 1px;}
@@ -112,19 +113,29 @@ st.markdown("""
         cursor: help;
     }
     
-    /* PROGRESS BAR STYLE */
-    .stProgress > div > div > div > div {
-        background: linear-gradient(90deg, #1e3799 0%, #4a69bd 100%);
+    /* FORECAST CARD */
+    .forecast-card {
+        background: white;
+        border-radius: 10px;
+        padding: 15px;
+        margin-bottom: 15px;
+        box-shadow: 0 3px 10px rgba(0,0,0,0.08);
+        border-left: 4px solid #00cec9;
     }
+    
+    /* INVENTORY STATUS COLORS */
+    .status-need-replenish { color: #e55039; font-weight: 700; }
+    .status-ideal { color: #38ada9; font-weight: 700; }
+    .status-high-stock { color: #f6b93b; font-weight: 700; }
 </style>
 """, unsafe_allow_html=True)
 
 # --- HEADER ---
 st.markdown("""
-<div style="text-align: center; font-size: 3rem; margin-bottom: -15px;">💎</div>
-<h1 class="main-header">INVENTORY INTELLIGENCE PRO V12</h1>
+<div style="text-align: center; font-size: 3rem; margin-bottom: -15px;">📈</div>
+<h1 class="main-header">INVENTORY INTELLIGENCE PRO V13</h1>
 <div style="text-align: center; color: #666; font-size: 0.9rem; margin-bottom: 2rem;">
-    🚀 Integrated Performance, Inventory & Sales Analytics
+    🚀 Advanced Forecasting & Inventory Optimization
 </div>
 """, unsafe_allow_html=True)
 
@@ -272,7 +283,7 @@ def process_stock_data(df_stock_raw, active_ids):
         return df_stock
     return pd.DataFrame()
 
-# --- 2. ANALYTICS ENGINE - IMPROVED ---
+# --- 2. ANALYTICS ENGINE - UPDATED ---
 @st.cache_data(ttl=300)
 def calculate_monthly_performance(df_forecast, df_po, df_product):
     """Calculate monthly forecast performance"""
@@ -334,7 +345,7 @@ def calculate_monthly_performance(df_forecast, df_po, df_product):
 
 @st.cache_data(ttl=300)
 def calculate_inventory_metrics(df_stock, df_sales, df_product, months_range=3):
-    """Calculate inventory metrics"""
+    """Calculate inventory metrics with UPDATED LOGIC"""
     if df_stock.empty:
         return pd.DataFrame()
     
@@ -364,32 +375,39 @@ def calculate_inventory_metrics(df_stock, df_sales, df_product, months_range=3):
     
     progress_bar.progress(70)
     
+    # UPDATED LOGIC: Calculate Cover Months
     inv['Cover_Months'] = np.where(
         inv['Avg_Sales_3M'] > 0, 
         inv['Stock_Qty'] / inv['Avg_Sales_3M'], 
         999
-    )
+    ).round(2)
     
+    # UPDATED LOGIC: Inventory Status
+    # Under 1 month = Need Replenishment
+    # 1-1.5 months = Ideal
+    # Above 1.5 months = High Stock
     inv['Status_Stock'] = np.select(
         [
-            inv['Cover_Months'] < 0.8, 
-            (inv['Cover_Months'] >= 0.8) & (inv['Cover_Months'] <= 1.5), 
-            inv['Cover_Months'] > 1.5
+            inv['Cover_Months'] < 1.0,                     # Under 1 month
+            (inv['Cover_Months'] >= 1.0) & (inv['Cover_Months'] <= 1.5),  # 1-1.5 months
+            inv['Cover_Months'] > 1.5                      # Above 1.5 months
         ],
         ['Need Replenishment', 'Ideal', 'High Stock'], 
         default='Unknown'
     )
     
+    # UPDATED LOGIC: Quantity to Reduce (High Stock)
     inv['Qty_to_Reduce'] = np.where(
         inv['Status_Stock'] == 'High Stock',
-        inv['Stock_Qty'] - (1.5 * inv['Avg_Sales_3M']),
+        inv['Stock_Qty'] - (1.5 * inv['Avg_Sales_3M']),  # Reduce to 1.5 months cover
         0
     ).astype(int)
     inv['Qty_to_Reduce'] = np.where(inv['Qty_to_Reduce'] < 0, 0, inv['Qty_to_Reduce'])
     
+    # UPDATED LOGIC: Quantity to Order (Need Replenishment)
     inv['Qty_to_Order'] = np.where(
         inv['Status_Stock'] == 'Need Replenishment',
-        (0.8 * inv['Avg_Sales_3M']) - inv['Stock_Qty'],
+        (1.0 * inv['Avg_Sales_3M']) - inv['Stock_Qty'],  # Order to reach 1 month cover
         0
     ).astype(int)
     inv['Qty_to_Order'] = np.where(inv['Qty_to_Order'] < 0, 0, inv['Qty_to_Order'])
@@ -429,8 +447,160 @@ def get_last_3m_sales_pivot(df_sales, months_range=3):
     
     return df_pivot, month_names
 
-# --- 3. EXPORT FUNCTION ---
-def export_to_excel(monthly_perf, inv_df, sales_df, product_df):
+# --- 3. ROLLING FORECAST ENGINE ---
+@st.cache_data(ttl=300)
+def calculate_brand_growth(df_sales, df_product, months_lookback=12):
+    """Calculate brand growth rate from historical data"""
+    if df_sales.empty or df_product.empty:
+        return pd.DataFrame()
+    
+    # Merge sales with product to get brand info
+    df_sales_brand = pd.merge(df_sales, df_product[['SKU_ID', 'Brand']], on='SKU_ID', how='left')
+    
+    if df_sales_brand.empty:
+        return pd.DataFrame()
+    
+    # Aggregate sales by month and brand
+    df_monthly = df_sales_brand.groupby(['Month', 'Brand'])['Sales_Qty'].sum().reset_index()
+    df_monthly = df_monthly.sort_values(['Brand', 'Month'])
+    
+    # Calculate month-over-month growth by brand
+    brand_growth = []
+    
+    for brand in df_monthly['Brand'].unique():
+        brand_data = df_monthly[df_monthly['Brand'] == brand].copy()
+        
+        if len(brand_data) > 1:
+            brand_data = brand_data.sort_values('Month')
+            brand_data['Prev_Month_Sales'] = brand_data['Sales_Qty'].shift(1)
+            brand_data['Growth_Rate'] = np.where(
+                brand_data['Prev_Month_Sales'] > 0,
+                ((brand_data['Sales_Qty'] - brand_data['Prev_Month_Sales']) / brand_data['Prev_Month_Sales']) * 100,
+                0
+            )
+            
+            # Average growth rate (exclude NaN and infinite values)
+            avg_growth = brand_data['Growth_Rate'].replace([np.inf, -np.inf], np.nan).dropna().mean()
+            
+            brand_growth.append({
+                'Brand': brand,
+                'Avg_Growth_Rate': avg_growth if not pd.isna(avg_growth) else 0,
+                'Data_Points': len(brand_data),
+                'Last_Month': brand_data['Month'].max()
+            })
+    
+    return pd.DataFrame(brand_growth)
+
+@st.cache_data(ttl=300)
+def generate_rolling_forecast(df_sales, df_product, forecast_months=12, start_month=None):
+    """Generate 12-month rolling forecast based on 3-month average and brand growth"""
+    if df_sales.empty or df_product.empty:
+        return pd.DataFrame()
+    
+    # Set start month
+    if start_month is None:
+        start_month = datetime.now().replace(day=1)
+    else:
+        start_month = pd.to_datetime(start_month).replace(day=1)
+    
+    # Get last 3 months of sales data
+    df_sales['Month'] = pd.to_datetime(df_sales['Month'])
+    last_3_months = sorted(df_sales['Month'].unique())[-3:]
+    
+    if len(last_3_months) < 1:
+        return pd.DataFrame()
+    
+    # Calculate 3-month average sales by SKU
+    df_3m_sales = df_sales[df_sales['Month'].isin(last_3_months)]
+    avg_sales = df_3m_sales.groupby('SKU_ID')['Sales_Qty'].mean().reset_index()
+    avg_sales = avg_sales.rename(columns={'Sales_Qty': 'Avg_Sales_3M'})
+    avg_sales['Avg_Sales_3M'] = avg_sales['Avg_Sales_3M'].round(0).astype(int)
+    
+    # Calculate brand growth rates
+    brand_growth_df = calculate_brand_growth(df_sales, df_product)
+    
+    # Merge with product data
+    forecast_base = pd.merge(avg_sales, df_product[['SKU_ID', 'Product_Name', 'Brand', 'SKU_Tier', 'Status']], 
+                             on='SKU_ID', how='inner')
+    
+    # Filter only active SKUs
+    forecast_base = forecast_base[forecast_base['Status'].str.upper() == 'ACTIVE']
+    
+    # Merge with brand growth rates
+    if not brand_growth_df.empty:
+        forecast_base = pd.merge(forecast_base, brand_growth_df[['Brand', 'Avg_Growth_Rate']], 
+                                on='Brand', how='left')
+        forecast_base['Avg_Growth_Rate'] = forecast_base['Avg_Growth_Rate'].fillna(0)
+    else:
+        forecast_base['Avg_Growth_Rate'] = 0
+    
+    # Generate forecast for each month
+    forecast_results = []
+    
+    for month_offset in range(forecast_months):
+        forecast_month = start_month + pd.DateOffset(months=month_offset)
+        
+        for _, row in forecast_base.iterrows():
+            base_sales = row['Avg_Sales_3M']
+            growth_rate = row['Avg_Growth_Rate']
+            
+            # Apply growth rate (compounded monthly)
+            forecast_qty = base_sales * ((1 + growth_rate/100) ** (month_offset + 1))
+            
+            forecast_results.append({
+                'SKU_ID': row['SKU_ID'],
+                'Product_Name': row['Product_Name'],
+                'Brand': row['Brand'],
+                'SKU_Tier': row['SKU_Tier'],
+                'Month': forecast_month,
+                'Month_Label': forecast_month.strftime('%b-%Y'),
+                'Base_Avg_Sales_3M': base_sales,
+                'Brand_Growth_Rate': growth_rate,
+                'Forecast_Qty': round(forecast_qty),
+                'Month_Offset': month_offset + 1
+            })
+    
+    forecast_df = pd.DataFrame(forecast_results)
+    
+    # Add summary columns
+    forecast_df['Forecast_Qty'] = forecast_df['Forecast_Qty'].astype(int)
+    
+    return forecast_df
+
+@st.cache_data(ttl=300)
+def aggregate_forecast_by_period(forecast_df, period='monthly'):
+    """Aggregate forecast by period"""
+    if forecast_df.empty:
+        return pd.DataFrame()
+    
+    if period == 'monthly':
+        agg_df = forecast_df.groupby(['Month', 'Month_Label', 'Brand']).agg({
+            'Forecast_Qty': 'sum',
+            'SKU_ID': 'nunique'
+        }).reset_index()
+        agg_df = agg_df.rename(columns={'SKU_ID': 'SKU_Count'})
+        agg_df = agg_df.sort_values('Month')
+    
+    elif period == 'brand':
+        agg_df = forecast_df.groupby(['Brand']).agg({
+            'Forecast_Qty': 'sum',
+            'SKU_ID': 'nunique'
+        }).reset_index()
+        agg_df = agg_df.rename(columns={'SKU_ID': 'SKU_Count'})
+        agg_df = agg_df.sort_values('Forecast_Qty', ascending=False)
+    
+    elif period == 'tier':
+        agg_df = forecast_df.groupby(['SKU_Tier']).agg({
+            'Forecast_Qty': 'sum',
+            'SKU_ID': 'nunique'
+        }).reset_index()
+        agg_df = agg_df.rename(columns={'SKU_ID': 'SKU_Count'})
+        agg_df = agg_df.sort_values('Forecast_Qty', ascending=False)
+    
+    return agg_df
+
+# --- 4. EXPORT FUNCTION ---
+def export_to_excel(monthly_perf, inv_df, sales_df, product_df, forecast_df=None):
     """Export data to Excel file"""
     if not monthly_perf or inv_df.empty:
         st.warning("Tidak ada data untuk diexport")
@@ -459,15 +629,41 @@ def export_to_excel(monthly_perf, inv_df, sales_df, product_df):
             if not product_df.empty:
                 product_df.to_excel(writer, sheet_name='Product_Master', index=False)
             
+            # Rolling Forecast
+            if forecast_df is not None and not forecast_df.empty:
+                forecast_df.to_excel(writer, sheet_name='Rolling_Forecast', index=False)
+                
+                # Aggregated forecast
+                agg_monthly = aggregate_forecast_by_period(forecast_df, 'monthly')
+                if not agg_monthly.empty:
+                    agg_monthly.to_excel(writer, sheet_name='Forecast_Monthly', index=False)
+                
+                agg_brand = aggregate_forecast_by_period(forecast_df, 'brand')
+                if not agg_brand.empty:
+                    agg_brand.to_excel(writer, sheet_name='Forecast_Brand', index=False)
+            
             # Summary Stats
             summary_data = {
-                'Metric': ['Total SKU', 'Active SKU', 'Need Replenishment', 'Ideal Stock', 'High Stock'],
+                'Metric': [
+                    'Total SKU', 
+                    'Active SKU', 
+                    'Need Replenishment (<1 month)', 
+                    'Ideal Stock (1-1.5 months)', 
+                    'High Stock (>1.5 months)'
+                ],
                 'Value': [
                     len(product_df),
                     len(product_df[product_df['Status'] == 'Active']),
                     len(inv_df[inv_df['Status_Stock'] == 'Need Replenishment']),
                     len(inv_df[inv_df['Status_Stock'] == 'Ideal']),
                     len(inv_df[inv_df['Status_Stock'] == 'High Stock'])
+                ],
+                'Description': [
+                    'Total number of SKUs in system',
+                    'Number of active SKUs',
+                    'SKUs with stock cover less than 1 month',
+                    'SKUs with stock cover between 1-1.5 months',
+                    'SKUs with stock cover more than 1.5 months'
                 ]
             }
             pd.DataFrame(summary_data).to_excel(writer, sheet_name='Summary', index=False)
@@ -478,7 +674,7 @@ def export_to_excel(monthly_perf, inv_df, sales_df, product_df):
         st.error(f"Error creating Excel file: {str(e)}")
         return None
 
-# --- 4. MAIN DATA LOADING WITH PROGRESS ---
+# --- 5. MAIN DATA LOADING ---
 def load_all_data():
     """Main function to load and process all data"""
     with st.spinner('🔄 Initializing connection...'):
@@ -531,7 +727,7 @@ def load_all_data():
         'stock': df_stock
     }
 
-# --- 5. SIDEBAR CONTROLS ---
+# --- 6. SIDEBAR CONTROLS ---
 with st.sidebar:
     st.header("⚙️ Control Panel")
     
@@ -561,6 +757,33 @@ with st.sidebar:
     else:
         months_range = 12
     
+    # Forecast Settings
+    st.markdown("---")
+    st.subheader("📈 Forecast Settings")
+    forecast_start_month = st.date_input(
+        "Forecast Start Month",
+        value=date.today().replace(day=1),
+        key="forecast_start"
+    )
+    
+    forecast_months = st.slider(
+        "Forecast Period (Months)",
+        min_value=6,
+        max_value=24,
+        value=12,
+        step=1,
+        key="forecast_months"
+    )
+    
+    default_growth_rate = st.number_input(
+        "Default Growth Rate (%)",
+        min_value=-50.0,
+        max_value=200.0,
+        value=0.0,
+        step=0.5,
+        key="default_growth"
+    )
+    
     st.markdown("---")
     
     # Export Section
@@ -579,7 +802,7 @@ with st.sidebar:
     # Placeholder for alerts - will be updated after data load
     alert_placeholder = st.empty()
 
-# --- 6. MAIN DATA PROCESSING ---
+# --- 7. MAIN DATA PROCESSING ---
 all_data = load_all_data()
 
 if all_data is None:
@@ -612,30 +835,44 @@ with st.spinner('📦 Calculating inventory metrics...'):
 with st.spinner('📊 Processing sales data...'):
     sales_pivot, sales_months_names = get_last_3m_sales_pivot(
         all_data['sales'],
-        months_range=3  # Always last 3 months for pivot
+        months_range=3
+    )
+
+# Generate rolling forecast
+with st.spinner('🔮 Generating rolling forecast...'):
+    forecast_df = generate_rolling_forecast(
+        all_data['sales'],
+        all_data['product'],
+        forecast_months=forecast_months,
+        start_month=forecast_start_month
     )
 
 # Update sidebar alerts
 with st.sidebar:
     alert_placeholder.empty()
     if not inv_df.empty:
-        high_stock_count = len(inv_df[inv_df['Status_Stock'] == 'High Stock'])
         need_replenish_count = len(inv_df[inv_df['Status_Stock'] == 'Need Replenishment'])
-        
-        if high_stock_count > 10:
-            st.warning(f"⚠️ **{high_stock_count} SKUs** memiliki High Stock!")
+        high_stock_count = len(inv_df[inv_df['Status_Stock'] == 'High Stock'])
         
         if need_replenish_count > 5:
-            st.error(f"🚨 **{need_replenish_count} SKUs** perlu replenishment!")
+            st.error(f"🚨 **{need_replenish_count} SKUs** perlu replenishment (<1 month stock)!")
         
-        if high_stock_count <= 10 and need_replenish_count <= 5:
-            st.success("✅ Inventory status baik")
+        if high_stock_count > 10:
+            st.warning(f"⚠️ **{high_stock_count} SKUs** memiliki High Stock (>1.5 months)!")
+        
+        if need_replenish_count <= 5 and high_stock_count <= 10:
+            st.success("✅ Inventory status optimal")
+        
+        # Display inventory summary
+        ideal_count = len(inv_df[inv_df['Status_Stock'] == 'Ideal'])
+        st.info(f"📊 Inventory Summary: {need_replenish_count} Need, {ideal_count} Ideal, {high_stock_count} High")
 
-# --- 7. DASHBOARD TABS ---
-tab1, tab2, tab3 = st.tabs([
+# --- 8. DASHBOARD TABS ---
+tab1, tab2, tab3, tab4 = st.tabs([
     "📊 Performance Dashboard", 
     "📦 Inventory Analysis", 
-    "📈 Sales Analysis"
+    "📈 Sales Analysis",
+    "🔮 Rolling Forecast"
 ])
 
 # ==========================================
@@ -709,33 +946,39 @@ with tab1:
                 <div class="sum-val">{total_rofo_qty:,.0f}</div>
                 <div class="sum-sub">Forecast Quantity</div></div>""", unsafe_allow_html=True)
         
-        # C. INVENTORY QUICK VIEW
+        # C. INVENTORY QUICK VIEW WITH UPDATED LOGIC
         st.markdown("---")
-        st.subheader("📦 Inventory Quick View")
+        st.subheader("📦 Inventory Quick View (Updated Logic)")
         
         if not inv_df.empty:
             need_replenish = len(inv_df[inv_df['Status_Stock'] == 'Need Replenishment'])
             ideal = len(inv_df[inv_df['Status_Stock'] == 'Ideal'])
             high = len(inv_df[inv_df['Status_Stock'] == 'High Stock'])
             
+            # Calculate average cover months by status
+            avg_cover_need = inv_df[inv_df['Status_Stock'] == 'Need Replenishment']['Cover_Months'].mean()
+            avg_cover_ideal = inv_df[inv_df['Status_Stock'] == 'Ideal']['Cover_Months'].mean()
+            avg_cover_high = inv_df[inv_df['Status_Stock'] == 'High Stock']['Cover_Months'].mean()
+            
             col_inv1, col_inv2, col_inv3, col_inv4 = st.columns(4)
             with col_inv1:
                 st.markdown(f"""<div class="summary-card bg-red"><div class="sum-title">NEED REPLENISH</div>
                 <div class="sum-val">{need_replenish}</div>
-                <div class="sum-sub">SKUs</div></div>""", unsafe_allow_html=True)
+                <div class="sum-sub"><span class="status-need-replenish"><1 month</span><br>Avg: {avg_cover_need:.1f}m</div></div>""", unsafe_allow_html=True)
             with col_inv2:
                 st.markdown(f"""<div class="summary-card bg-green"><div class="sum-title">IDEAL STOCK</div>
                 <div class="sum-val">{ideal}</div>
-                <div class="sum-sub">SKUs</div></div>""", unsafe_allow_html=True)
+                <div class="sum-sub"><span class="status-ideal">1-1.5 months</span><br>Avg: {avg_cover_ideal:.1f}m</div></div>""", unsafe_allow_html=True)
             with col_inv3:
                 st.markdown(f"""<div class="summary-card bg-orange"><div class="sum-title">HIGH STOCK</div>
                 <div class="sum-val">{high}</div>
-                <div class="sum-sub">SKUs</div></div>""", unsafe_allow_html=True)
+                <div class="sum-sub"><span class="status-high-stock">>1.5 months</span><br>Avg: {avg_cover_high:.1f}m</div></div>""", unsafe_allow_html=True)
             with col_inv4:
                 total_stock = inv_df['Stock_Qty'].sum()
-                st.markdown(f"""<div class="summary-card bg-purple"><div class="sum-title">TOTAL STOCK</div>
+                avg_cover_all = inv_df['Cover_Months'].mean()
+                st.markdown(f"""<div class="summary-card bg-purple"><div class="sum-title">OVERALL</div>
                 <div class="sum-val">{total_stock:,.0f}</div>
-                <div class="sum-sub">Units</div></div>""", unsafe_allow_html=True)
+                <div class="sum-sub">Total Stock<br>Avg Cover: {avg_cover_all:.1f}m</div></div>""", unsafe_allow_html=True)
         
         # D. TIER ANALYSIS
         st.markdown("---")
@@ -783,7 +1026,7 @@ with tab1:
         if not lm_data.empty:
             base_eval = pd.merge(
                 lm_data, 
-                inv_df[['SKU_ID', 'Stock_Qty', 'Avg_Sales_3M']], 
+                inv_df[['SKU_ID', 'Stock_Qty', 'Avg_Sales_3M', 'Cover_Months', 'Status_Stock']], 
                 on='SKU_ID', 
                 how='left'
             )
@@ -797,7 +1040,7 @@ with tab1:
             sales_cols = [c for c in base_eval.columns if c in sales_months_names]
             final_cols = [
                 'SKU_ID', 'Product_Name', 'Brand', 'SKU_Tier', 'Prod_Status', 'Status_Rofo',
-                'Forecast_Qty', 'PO_Qty', 'Ratio', 'Stock_Qty', 'Avg_Sales_3M'
+                'Forecast_Qty', 'PO_Qty', 'Ratio', 'Stock_Qty', 'Avg_Sales_3M', 'Cover_Months', 'Status_Stock'
             ] + sales_cols
             
             final_cols = [c for c in final_cols if c in base_eval.columns]
@@ -806,7 +1049,9 @@ with tab1:
                 'Prod_Status': 'Product Status',
                 'Ratio': 'Achv %',
                 'Stock_Qty': 'Stock',
-                'Avg_Sales_3M': 'Avg Sales (3M)'
+                'Avg_Sales_3M': 'Avg Sales (3M)',
+                'Cover_Months': 'Cover Month',
+                'Status_Stock': 'Inv Status'
             })
             
             t_all, t_under, t_over, t_nr = st.tabs(["All SKU", "Under Forecast", "Over Forecast", "No Rofo"])
@@ -815,6 +1060,7 @@ with tab1:
                 "Achv %": st.column_config.NumberColumn(format="%.0f%%"),
                 "Stock": st.column_config.NumberColumn(format="%d"),
                 "Avg Sales (3M)": st.column_config.NumberColumn(format="%d"),
+                "Cover Month": st.column_config.NumberColumn(format="%.1f"),
                 "Forecast_Qty": st.column_config.NumberColumn(format="%d"),
                 "PO_Qty": st.column_config.NumberColumn(format="%d")
             }
@@ -834,9 +1080,26 @@ with tab1:
 # TAB 2: INVENTORY ANALYSIS
 # ==========================================
 with tab2:
-    st.subheader("📦 Inventory Overview")
+    st.subheader("📦 Inventory Overview (Updated Logic)")
     
     if not inv_df.empty:
+        # Show inventory logic explanation
+        with st.expander("📋 Inventory Logic Rules", expanded=True):
+            st.markdown("""
+            ### Updated Inventory Classification Rules:
+            
+            | Status | Cover Months | Action Required |
+            |--------|--------------|-----------------|
+            | **Need Replenishment** | **< 1.0 month** | Immediate ordering needed to reach 1 month cover |
+            | **Ideal Stock** | **1.0 - 1.5 months** | Optimal stock level, maintain current level |
+            | **High Stock** | **> 1.5 months** | Excess stock, consider reducing inventory |
+            
+            ### Calculation Method:
+            - **Cover Months** = Stock Quantity ÷ Average Sales (3 Months)
+            - **Qty to Order** = (1.0 × Avg Sales) - Current Stock (for Need Replenishment)
+            - **Qty to Reduce** = Current Stock - (1.5 × Avg Sales) (for High Stock)
+            """)
+        
         # 1. SALES METRICS
         st.markdown("##### Recent Sales Performance")
         
@@ -907,7 +1170,7 @@ with tab2:
                 <div style="background:#e8f5e9; padding:15px; border-radius:10px; text-align:center; border:1px solid #38ada9;">
                     <div style="color:#38ada9; font-weight:bold;">QTY TO ORDER</div>
                     <div style="font-size:1.8rem; font-weight:800; color:#333;">{to_order:,.0f}</div>
-                    <div style="font-size:0.8rem;">For SKU Need Replenishment</div>
+                    <div style="font-size:0.8rem;">To reach 1 month cover</div>
                 </div>
                 """, unsafe_allow_html=True)
                 
@@ -916,7 +1179,7 @@ with tab2:
                 <div style="background:#fff3e0; padding:15px; border-radius:10px; text-align:center; border:1px solid #f6b93b;">
                     <div style="color:#f6b93b; font-weight:bold;">QTY TO REDUCE</div>
                     <div style="font-size:1.8rem; font-weight:800; color:#333;">{to_reduce:,.0f}</div>
-                    <div style="font-size:0.8rem;">For High Stock SKU</div>
+                    <div style="font-size:0.8rem;">To reach 1.5 month cover</div>
                 </div>
                 """, unsafe_allow_html=True)
             
@@ -949,7 +1212,37 @@ with tab2:
                     height=200
                 )
 
-        # 3. DETAIL TABLE
+        # 3. COVER MONTHS DISTRIBUTION
+        st.markdown("---")
+        st.subheader("📊 Cover Months Distribution")
+        
+        col_dist1, col_dist2 = st.columns(2)
+        
+        with col_dist1:
+            # Histogram of Cover Months
+            fig_hist = px.histogram(inv_df, x='Cover_Months', nbins=30,
+                                    title="Distribution of Cover Months",
+                                    labels={'Cover_Months': 'Cover Months', 'count': 'Number of SKUs'},
+                                    color_discrete_sequence=['#1e3799'])
+            fig_hist.add_vline(x=1.0, line_dash="dash", line_color="red", annotation_text="1 month")
+            fig_hist.add_vline(x=1.5, line_dash="dash", line_color="orange", annotation_text="1.5 months")
+            fig_hist.update_layout(height=350)
+            st.plotly_chart(fig_hist, use_container_width=True)
+        
+        with col_dist2:
+            # Box plot by Status
+            fig_box = px.box(inv_df, x='Status_Stock', y='Cover_Months',
+                             title="Cover Months by Status",
+                             color='Status_Stock',
+                             color_discrete_map={
+                                 'Need Replenishment':'#e55039',
+                                 'Ideal':'#38ada9',
+                                 'High Stock':'#f6b93b'
+                             })
+            fig_box.update_layout(height=350, xaxis_title="Status", yaxis_title="Cover Months")
+            st.plotly_chart(fig_box, use_container_width=True)
+
+        # 4. DETAIL TABLE
         st.markdown("---")
         st.subheader("📋 Inventory Detail SKU")
         
@@ -1105,7 +1398,7 @@ with tab3:
             )
             
             avg_accuracy = combo_b['Accuracy %'].mean()
-            st.metric("Average Accuracy", f"{avg_accuracy:.1f}%")
+            st.metric("Average Forecast Accuracy", f"{avg_accuracy:.1f}%")
         
         st.markdown("---")
         
@@ -1181,7 +1474,200 @@ with tab3:
     else:
         st.warning("Data Sales dan Forecast diperlukan untuk analisis ini.")
 
-# --- 8. EXPORT FUNCTIONALITY ---
+# ==========================================
+# TAB 4: ROLLING FORECAST
+# ==========================================
+with tab4:
+    st.subheader("🔮 Rolling Forecast (12-Month Projection)")
+    
+    if forecast_df.empty:
+        st.warning("Data forecast tidak tersedia. Pastikan data sales dan product master sudah diisi.")
+    else:
+        # Show forecast methodology
+        with st.expander("📊 Forecast Methodology", expanded=True):
+            st.markdown(f"""
+            ### Forecast Generation Logic:
+            
+            **Base Calculation:**
+            1. **3-Month Average Sales**: Rata-rata sales 3 bulan terakhir untuk setiap SKU
+            2. **Brand Growth Rate**: Pertumbuhan month-to-month berdasarkan data historis per brand
+            3. **Compounded Growth**: Forecast bulan ke-n = Base × (1 + Growth Rate)ⁿ
+            
+            **Settings Applied:**
+            - **Start Month**: {forecast_start_month.strftime('%B %Y')}
+            - **Forecast Period**: {forecast_months} bulan
+            - **Growth Calculation**: Berdasarkan data historis {months_range} bulan terakhir
+            
+            **Formula:**
+            ```
+            Forecast Bulan ke-n = Avg_Sales_3M × (1 + Brand_Growth_Rate)ⁿ
+            ```
+            """)
+        
+        # 1. FORECAST OVERVIEW
+        st.markdown("##### 1. Total Forecast Overview")
+        
+        # Aggregate forecast by month
+        monthly_forecast = forecast_df.groupby(['Month', 'Month_Label'])['Forecast_Qty'].sum().reset_index()
+        monthly_forecast = monthly_forecast.sort_values('Month')
+        
+        col_fc1, col_fc2, col_fc3 = st.columns(3)
+        with col_fc1:
+            total_forecast = monthly_forecast['Forecast_Qty'].sum()
+            st.metric("Total Forecast Quantity", f"{total_forecast:,.0f}")
+        with col_fc2:
+            avg_monthly = monthly_forecast['Forecast_Qty'].mean()
+            st.metric("Average Monthly Forecast", f"{avg_monthly:,.0f}")
+        with col_fc3:
+            sku_count = forecast_df['SKU_ID'].nunique()
+            st.metric("Number of SKUs Forecasted", f"{sku_count}")
+        
+        # Monthly forecast trend
+        fig_monthly = px.line(monthly_forecast, x='Month', y='Forecast_Qty', markers=True,
+                              title="Monthly Forecast Trend",
+                              labels={'Forecast_Qty': 'Forecast Quantity', 'Month': 'Month'})
+        fig_monthly.update_layout(height=350)
+        st.plotly_chart(fig_monthly, use_container_width=True)
+        
+        st.markdown("---")
+        
+        # 2. BRAND-WISE ANALYSIS
+        st.markdown("##### 2. Brand Analysis")
+        
+        # Calculate brand growth rates
+        brand_growth_df = calculate_brand_growth(all_data['sales'], all_data['product'])
+        
+        col_br1, col_br2 = st.columns(2)
+        
+        with col_br1:
+            # Brand growth rates
+            if not brand_growth_df.empty:
+                st.markdown("**Brand Growth Rates**")
+                brand_growth_display = brand_growth_df[['Brand', 'Avg_Growth_Rate', 'Data_Points']].copy()
+                brand_growth_display['Avg_Growth_Rate'] = brand_growth_display['Avg_Growth_Rate'].round(2)
+                brand_growth_display['Status'] = np.where(
+                    brand_growth_display['Avg_Growth_Rate'] > 0, 'Growing', 'Declining'
+                )
+                st.dataframe(brand_growth_display.sort_values('Avg_Growth_Rate', ascending=False),
+                           use_container_width=True, height=300)
+        
+        with col_br2:
+            # Forecast by brand
+            brand_forecast = forecast_df.groupby('Brand').agg({
+                'Forecast_Qty': 'sum',
+                'SKU_ID': 'nunique'
+            }).reset_index()
+            brand_forecast = brand_forecast.rename(columns={'SKU_ID': 'SKU_Count'})
+            brand_forecast = brand_forecast.sort_values('Forecast_Qty', ascending=False)
+            
+            fig_brand = px.bar(brand_forecast.head(10), x='Brand', y='Forecast_Qty',
+                               title="Top 10 Brands by Forecast Quantity",
+                               labels={'Forecast_Qty': 'Total Forecast', 'Brand': 'Brand'},
+                               color='Forecast_Qty',
+                               color_continuous_scale='viridis')
+            fig_brand.update_layout(height=350)
+            st.plotly_chart(fig_brand, use_container_width=True)
+        
+        st.markdown("---")
+        
+        # 3. DETAILED FORECAST TABLE
+        st.markdown("##### 3. Detailed Forecast by SKU")
+        
+        # Filters
+        col_ff1, col_ff2, col_ff3 = st.columns(3)
+        with col_ff1:
+            forecast_brands = ['All'] + sorted(forecast_df['Brand'].unique().tolist())
+            fc_brand = st.selectbox("Filter by Brand", forecast_brands, key="fc_brand")
+        
+        with col_ff2:
+            forecast_tiers = ['All'] + sorted(forecast_df['SKU_Tier'].unique().tolist())
+            fc_tier = st.selectbox("Filter by Tier", forecast_tiers, key="fc_tier")
+        
+        with col_ff3:
+            # Select specific months to view
+            available_months = sorted(forecast_df['Month'].unique())
+            default_months = available_months[:3]  # First 3 months
+            fc_months = st.multiselect("Select Months", available_months, default=default_months)
+        
+        # Apply filters
+        forecast_filtered = forecast_df.copy()
+        if fc_brand != 'All':
+            forecast_filtered = forecast_filtered[forecast_filtered['Brand'] == fc_brand]
+        if fc_tier != 'All':
+            forecast_filtered = forecast_filtered[forecast_filtered['SKU_Tier'] == fc_tier]
+        if fc_months:
+            forecast_filtered = forecast_filtered[forecast_filtered['Month'].isin(fc_months)]
+        
+        # Pivot for better viewing
+        if not forecast_filtered.empty:
+            forecast_pivot = forecast_filtered.pivot_table(
+                index=['SKU_ID', 'Product_Name', 'Brand', 'SKU_Tier', 'Base_Avg_Sales_3M', 'Brand_Growth_Rate'],
+                columns='Month_Label',
+                values='Forecast_Qty',
+                aggfunc='sum'
+            ).reset_index()
+            
+            # Calculate totals
+            month_cols = [col for col in forecast_pivot.columns if '-' in str(col)]
+            if month_cols:
+                forecast_pivot['Total_Forecast'] = forecast_pivot[month_cols].sum(axis=1)
+                forecast_pivot['Avg_Monthly'] = forecast_pivot[month_cols].mean(axis=1).round(0)
+                
+                # Sort columns: info columns first, then monthly columns sorted by date
+                month_cols_sorted = sorted(month_cols, key=lambda x: datetime.strptime(x, '%b-%Y'))
+                display_cols = ['SKU_ID', 'Product_Name', 'Brand', 'SKU_Tier', 
+                               'Base_Avg_Sales_3M', 'Brand_Growth_Rate', 'Avg_Monthly', 'Total_Forecast'] + month_cols_sorted
+                
+                forecast_display = forecast_pivot[display_cols].rename(columns={
+                    'Base_Avg_Sales_3M': 'Base Avg (3M)',
+                    'Brand_Growth_Rate': 'Growth Rate %',
+                    'Avg_Monthly': 'Avg Monthly',
+                    'Total_Forecast': 'Total'
+                })
+                
+                # Format display
+                st.dataframe(
+                    forecast_display.sort_values('Total', ascending=False),
+                    column_config={
+                        "Base Avg (3M)": st.column_config.NumberColumn(format="%d"),
+                        "Growth Rate %": st.column_config.NumberColumn(format="%.1f%%"),
+                        "Avg Monthly": st.column_config.NumberColumn(format="%d"),
+                        "Total": st.column_config.NumberColumn(format="%d")
+                    },
+                    use_container_width=True,
+                    height=500
+                )
+        
+        # 4. FORECAST DOWNLOAD OPTION
+        st.markdown("---")
+        st.markdown("##### 4. Download Forecast Data")
+        
+        col_dl1, col_dl2 = st.columns(2)
+        
+        with col_dl1:
+            # Download full forecast
+            csv = forecast_df.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Download Full Forecast (CSV)",
+                data=csv,
+                file_name=f"rolling_forecast_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+        
+        with col_dl2:
+            # Download aggregated forecast
+            if not forecast_filtered.empty:
+                csv_agg = forecast_filtered.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="📥 Download Filtered Forecast (CSV)",
+                    data=csv_agg,
+                    file_name=f"filtered_forecast_{datetime.now().strftime('%Y%m%d')}.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+
+# --- 9. EXPORT FUNCTIONALITY ---
 with st.sidebar:
     st.markdown("---")
     
@@ -1226,7 +1712,8 @@ with st.sidebar:
                 monthly_perf, 
                 inv_df, 
                 sales_analysis_data, 
-                all_data['product']
+                all_data['product'],
+                forecast_df
             )
             
             if excel_file:
