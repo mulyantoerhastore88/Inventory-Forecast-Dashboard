@@ -12,7 +12,7 @@ warnings.filterwarnings('ignore')
 
 # --- Konfigurasi Halaman ---
 st.set_page_config(
-    page_title="Inventory Intelligence Pro V8.3",
+    page_title="Inventory Intelligence Pro V8.4",
     page_icon="💎",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -50,8 +50,8 @@ st.markdown("""
 
     /* SUMMARY CARDS */
     .summary-card {
-        border-radius: 15px; padding: 25px 20px; text-align: center; color: white;
-        box-shadow: 0 14px 28px rgba(0,0,0,0.10); margin-bottom: 20px;
+        border-radius: 15px; padding: 25px 20px; text-align: center;
+        color: white; box-shadow: 0 14px 28px rgba(0,0,0,0.10); margin-bottom: 20px;
         transition: transform 0.3s;
     }
     .summary-card:hover { transform: scale(1.02); }
@@ -70,6 +70,15 @@ st.markdown("""
     .bg-solid-white .sum-value { color: #5c6bc0; }
     .bg-solid-white .sum-pct { color: #333; }
     .bg-solid-white .sum-footer { border-top: 1px solid #eee; color: #666; }
+    
+    /* INVENTORY CARDS */
+    .inv-card {
+        background: white; border-radius: 12px; padding: 1.5rem; text-align: center;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05); border: 1px solid #eee;
+    }
+    .inv-replenish { border-bottom: 4px solid #ff4757; }
+    .inv-ideal { border-bottom: 4px solid #2ed573; }
+    .inv-high { border-bottom: 4px solid #ffa502; }
 
     .stTabs [data-baseweb="tab-list"] { gap: 10px; margin-top: 20px; }
     .stTabs [data-baseweb="tab"] { background-color: #f8f9fa; border-radius: 8px 8px 0 0; font-weight: 600; }
@@ -121,7 +130,6 @@ def load_and_process_data(_client):
         df_p = pd.DataFrame(ws.get_all_records())
         df_p.columns = [c.strip().replace(' ', '_') for c in df_p.columns]
         
-        # FIX: Paksa SKU_ID jadi String di Master
         if 'SKU_ID' in df_p.columns:
             df_p['SKU_ID'] = df_p['SKU_ID'].astype(str).str.strip()
             
@@ -135,19 +143,20 @@ def load_and_process_data(_client):
             df_temp = pd.DataFrame(ws_temp.get_all_records())
             df_temp.columns = [c.strip() for c in df_temp.columns]
             
-            # FIX: Paksa SKU_ID jadi String di Sheet Transaksi
             if 'SKU_ID' in df_temp.columns:
                 df_temp['SKU_ID'] = df_temp['SKU_ID'].astype(str).str.strip()
             else:
-                return pd.DataFrame() # Return empty if no SKU_ID
+                return pd.DataFrame()
                 
             m_cols = [c for c in df_temp.columns if any(m in c.upper() for m in ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'])]
             
             df_long = df_temp[['SKU_ID'] + m_cols].melt(id_vars=['SKU_ID'], value_vars=m_cols, var_name='Month_Label', value_name=val_col)
             df_long[val_col] = pd.to_numeric(df_long[val_col], errors='coerce').fillna(0)
-            df_long['Month'] = df_long['Month_Label'].apply(parse_month_label)
             
-            # Filter Active Only
+            # --- FIX: FORCE MONTH TO DATETIME ---
+            df_long['Month'] = df_long['Month_Label'].apply(parse_month_label)
+            df_long['Month'] = pd.to_datetime(df_long['Month']) 
+            
             return df_long[df_long['SKU_ID'].isin(active_ids)]
 
         data['sales'] = robust_melt("Sales", "Sales_Qty")
@@ -159,7 +168,6 @@ def load_and_process_data(_client):
         df_s = pd.DataFrame(ws_s.get_all_records())
         df_s.columns = [c.strip().replace(' ', '_') for c in df_s.columns]
         
-        # FIX: Paksa SKU_ID jadi String di Stock
         if 'SKU_ID' in df_s.columns:
             df_s['SKU_ID'] = df_s['SKU_ID'].astype(str).str.strip()
             
@@ -167,7 +175,6 @@ def load_and_process_data(_client):
         if s_col and 'SKU_ID' in df_s.columns:
             df_stock = df_s[['SKU_ID', s_col]].rename(columns={s_col: 'Stock_Qty'})
             df_stock['Stock_Qty'] = pd.to_numeric(df_stock['Stock_Qty'], errors='coerce').fillna(0)
-            # Group by SKU_ID to ensure unique
             data['stock'] = df_stock[df_stock['SKU_ID'].isin(active_ids)].groupby('SKU_ID').max().reset_index()
         else:
             data['stock'] = pd.DataFrame(columns=['SKU_ID', 'Stock_Qty'])
@@ -185,7 +192,11 @@ def load_and_process_data(_client):
 def calculate_monthly_performance(df_forecast, df_po, df_product):
     if df_forecast.empty or df_po.empty: return {}
     
-    # Merge Forecast & PO (Sekarang Aman karena SKU_ID sudah String semua)
+    # --- FIX: Ensure 'Month' is datetime on both sides before merge ---
+    df_forecast['Month'] = pd.to_datetime(df_forecast['Month'])
+    df_po['Month'] = pd.to_datetime(df_po['Month'])
+    
+    # Merge Forecast & PO
     df_merged = pd.merge(df_forecast, df_po, on=['SKU_ID', 'Month'], how='inner')
     
     if not df_product.empty:
@@ -214,6 +225,8 @@ def calculate_inventory_metrics(df_stock, df_sales, df_product):
     if df_stock.empty: return pd.DataFrame()
     
     if not df_sales.empty:
+        # Ensure Month is datetime
+        df_sales['Month'] = pd.to_datetime(df_sales['Month'])
         months = sorted(df_sales['Month'].unique())[-3:]
         sales_3m = df_sales[df_sales['Month'].isin(months)]
         avg_sales = sales_3m.groupby('SKU_ID')['Sales_Qty'].mean().reset_index(name='Avg_Sales_3M')
@@ -402,6 +415,16 @@ with tab2:
 with tab3:
     st.subheader("📦 Inventory Health")
     if not inv_df.empty:
+        c1, c2, c3 = st.columns(3)
+        n_rep = len(inv_df[inv_df['Status']=='Need Replenishment'])
+        n_ideal = len(inv_df[inv_df['Status']=='Ideal/Healthy'])
+        n_high = len(inv_df[inv_df['Status']=='High Stock'])
+        
+        with c1: st.markdown(f'<div class="inv-card inv-replenish"><h3>Need Replenishment</h3><h1 style="color:#ff4757">{n_rep}</h1><p>Cover < 0.8 Mo</p></div>', unsafe_allow_html=True)
+        with c2: st.markdown(f'<div class="inv-card inv-ideal"><h3>Ideal Inventory</h3><h1 style="color:#2ed573">{n_ideal}</h1><p>0.8 - 1.5 Mo</p></div>', unsafe_allow_html=True)
+        with c3: st.markdown(f'<div class="inv-card inv-high"><h3>High Stock</h3><h1 style="color:#ffa502">{n_high}</h1><p>Cover > 1.5 Mo</p></div>', unsafe_allow_html=True)
+        
+        st.divider()
         fil = st.multiselect("Filter Status", inv_df['Status'].unique(), default=['Need Replenishment', 'High Stock'])
         show_cols = ['SKU_ID', 'Product_Name', 'Stock_Qty', 'Avg_Sales_3M', 'Cover_Months', 'Status', 'Brand', 'SKU_Tier']
         show_cols = [c for c in show_cols if c in inv_df.columns]
@@ -416,11 +439,17 @@ with tab3:
 with tab4:
     st.subheader("🔍 Sales vs Forecast Deviation")
     if 'sales' in all_data and 'forecast' in all_data:
-        common = sorted(set(all_data['sales']['Month']) & set(all_data['forecast']['Month']))
+        # FIX: Ensure datetime matching for Sales & Forecast
+        sales_df = all_data['sales'].copy()
+        sales_df['Month'] = pd.to_datetime(sales_df['Month'])
+        fc_df = all_data['forecast'].copy()
+        fc_df['Month'] = pd.to_datetime(fc_df['Month'])
+        
+        common = sorted(set(sales_df['Month']) & set(fc_df['Month']))
         if common:
             lm = common[-1]
-            s = all_data['sales'][all_data['sales']['Month']==lm]
-            f = all_data['forecast'][all_data['forecast']['Month']==lm]
+            s = sales_df[sales_df['Month']==lm]
+            f = fc_df[fc_df['Month']==lm]
             comp = pd.merge(s, f, on='SKU_ID', suffixes=('_Sales', '_Fc'))
             
             if not all_data['product'].empty:
