@@ -12,7 +12,7 @@ warnings.filterwarnings('ignore')
 
 # --- Konfigurasi Halaman ---
 st.set_page_config(
-    page_title="Inventory Intelligence Pro V8.1",
+    page_title="Inventory Intelligence Pro V8.2",
     page_icon="💎",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -42,7 +42,7 @@ st.markdown("""
         margin-bottom: 2rem;
     }
 
-    /* MONTHLY CARDS (TOP ROW - WHITE) */
+    /* MONTH CARD (Top Row - White Floating) */
     .month-card {
         background: white;
         border-radius: 15px;
@@ -172,17 +172,29 @@ def load_and_process_data(_client):
     gsheet_url = st.secrets["gsheet_url"]
     data = {}
     try:
+        # 1. Product Master (Metadata)
         ws = _client.open_by_url(gsheet_url).worksheet("Product_Master")
         df_p = pd.DataFrame(ws.get_all_records())
         df_p.columns = [c.strip().replace(' ', '_') for c in df_p.columns]
+        
+        # --- FIX #1: PAKSA SKU_ID JADI STRING DI MASTER ---
+        if 'SKU_ID' in df_p.columns:
+            df_p['SKU_ID'] = df_p['SKU_ID'].astype(str).str.strip()
+            
         if 'Status' not in df_p.columns: df_p['Status'] = 'Active'
         df_active = df_p[df_p['Status'].str.upper() == 'ACTIVE'].copy()
         active_ids = df_active['SKU_ID'].tolist()
 
+        # Helper Melt Function
         def robust_melt(sheet_name, val_col):
             ws_temp = _client.open_by_url(gsheet_url).worksheet(sheet_name)
             df_temp = pd.DataFrame(ws_temp.get_all_records())
             df_temp.columns = [c.strip() for c in df_temp.columns]
+            
+            # --- FIX #2: PAKSA SKU_ID JADI STRING DI TRANSAKSI ---
+            if 'SKU_ID' in df_temp.columns:
+                df_temp['SKU_ID'] = df_temp['SKU_ID'].astype(str).str.strip()
+                
             m_cols = [c for c in df_temp.columns if any(m in c.upper() for m in ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'])]
             if 'SKU_ID' not in df_temp.columns: return pd.DataFrame()
             
@@ -195,9 +207,15 @@ def load_and_process_data(_client):
         data['forecast'] = robust_melt("Rofo", "Forecast_Qty")
         data['po'] = robust_melt("PO", "PO_Qty")
         
+        # Stock Data
         ws_s = _client.open_by_url(gsheet_url).worksheet("Stock_Onhand")
         df_s = pd.DataFrame(ws_s.get_all_records())
         df_s.columns = [c.strip().replace(' ', '_') for c in df_s.columns]
+        
+        # --- FIX #3: PAKSA SKU_ID JADI STRING DI STOCK ---
+        if 'SKU_ID' in df_s.columns:
+            df_s['SKU_ID'] = df_s['SKU_ID'].astype(str).str.strip()
+            
         s_col = next((c for c in ['Quantity_Available', 'Stock_Qty', 'STOCK_SAP'] if c in df_s.columns), None)
         if s_col and 'SKU_ID' in df_s.columns:
             df_stock = df_s[['SKU_ID', s_col]].rename(columns={s_col: 'Stock_Qty'})
@@ -210,7 +228,7 @@ def load_and_process_data(_client):
         data['product_active'] = df_active
         return data
     except Exception as e:
-        st.error(f"Error: {e}"); return {}
+        st.error(f"Error Loading: {e}"); return {}
 
 # --- ====================================================== ---
 # ---             2. ANALYTICS ENGINE                        ---
@@ -219,11 +237,15 @@ def load_and_process_data(_client):
 def calculate_monthly_performance(df_forecast, df_po, df_product):
     if df_forecast.empty or df_po.empty: return {}
     
+    # Merge Forecast & PO
     df_merged = pd.merge(df_forecast, df_po, on=['SKU_ID', 'Month'], how='inner')
+    
+    # Join Metadata
     if not df_product.empty:
         meta = df_product[['SKU_ID', 'Product_Name', 'SKU_Tier', 'Brand']].drop_duplicates()
         df_merged = pd.merge(df_merged, meta, on='SKU_ID', how='left')
     
+    # Calculate Metrics
     df_merged['Ratio'] = np.where(df_merged['Forecast_Qty']>0, (df_merged['PO_Qty']/df_merged['Forecast_Qty'])*100, 0)
     df_merged['Status'] = np.select(
         [df_merged['Ratio'] < 80, (df_merged['Ratio'] >= 80) & (df_merged['Ratio'] <= 120), df_merged['Ratio'] > 120],
@@ -231,6 +253,7 @@ def calculate_monthly_performance(df_forecast, df_po, df_product):
     )
     df_merged['APE'] = abs(df_merged['Ratio'] - 100)
     
+    # Group by Month
     monthly_stats = {}
     for month in sorted(df_merged['Month'].unique()):
         month_data = df_merged[df_merged['Month'] == month].copy()
@@ -245,6 +268,7 @@ def calculate_monthly_performance(df_forecast, df_po, df_product):
 def calculate_inventory_metrics(df_stock, df_sales, df_product):
     if df_stock.empty: return pd.DataFrame()
     
+    # Calculate 3-Month Average Sales
     if not df_sales.empty:
         months = sorted(df_sales['Month'].unique())[-3:]
         sales_3m = df_sales[df_sales['Month'].isin(months)]
@@ -252,6 +276,7 @@ def calculate_inventory_metrics(df_stock, df_sales, df_product):
     else:
         avg_sales = pd.DataFrame(columns=['SKU_ID', 'Avg_Sales_3M'])
         
+    # Merge Stock & Sales
     inv = pd.merge(df_stock, avg_sales, on='SKU_ID', how='left')
     inv['Avg_Sales_3M'] = inv['Avg_Sales_3M'].fillna(0)
     
@@ -273,7 +298,7 @@ def create_tier_chart(df_data):
                  title="Accuracy Distribution by Tier",
                  color_discrete_map={'Under': '#ef5350', 'Accurate': '#66bb6a', 'Over': '#ffa726'},
                  template="plotly_white")
-    fig.update_layout(height=350)
+    fig.update_layout(height=400)
     return fig
 
 # --- ====================================================== ---
@@ -289,123 +314,110 @@ with st.spinner('🔄 Loading Intelligence Engine...'):
 monthly_perf = calculate_monthly_performance(all_data['forecast'], all_data['po'], all_data['product'])
 inv_df = calculate_inventory_metrics(all_data['stock'], all_data['sales'], all_data['product'])
 
-# --- HEADER SECTION: PERFORMANCE 3 BULAN TERAKHIR ---
-st.subheader("📊 Performance Accuracy - 3 Bulan Terakhir")
+# --- TABS ---
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "📈 Performance Dashboard", "📊 Tier Analysis", "📦 Inventory Analysis", "🔍 Sales Analysis", "📋 Data Explorer"
+])
 
-if monthly_perf:
-    last_3_months = sorted(monthly_perf.keys())[-3:]
-    cols = st.columns(len(last_3_months))
-    
-    for idx, month in enumerate(last_3_months):
-        data = monthly_perf[month]
-        counts = data['counts']
+# --- TAB 1: DASHBOARD UTAMA (Requested: Month Cards & Evaluasi Rofo) ---
+with tab1:
+    if monthly_perf:
+        # A. MONTH CARDS (3 Bulan Terakhir)
+        st.subheader("📅 Forecast Performance - 3 Bulan Terakhir")
+        last_3_months = sorted(monthly_perf.keys())[-3:]
+        cols = st.columns(len(last_3_months))
         
-        with cols[idx]:
-            # HTML Card Floating (White)
+        for idx, month in enumerate(last_3_months):
+            data = monthly_perf[month]
+            counts = data['counts']
+            
+            with cols[idx]:
+                html_code = f"""
+<div class="month-card">
+    <div class="month-title">{month.strftime('%b %Y')}</div>
+    <div style="text-align:center; margin-bottom:15px;">
+        <span style="font-size:2.5rem; font-weight:800; color:#2a5298;">{data['accuracy']:.1f}%</span>
+        <br><span style="color:#888; font-size:0.8rem;">Overall Accuracy</span>
+    </div>
+    <div class="status-badge-container" style="justify-content: center; gap: 8px;">
+        <div class="badge badge-red">Under: {counts.get('Under',0)}</div>
+        <div class="badge badge-green">OK: {counts.get('Accurate',0)}</div>
+        <div class="badge badge-orange">Over: {counts.get('Over',0)}</div>
+    </div>
+</div>
+"""
+                st.markdown(html_code, unsafe_allow_html=True)
+        
+        # B. TOTAL SUMMARY (SOLID CARDS - BULAN TERAKHIR)
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.subheader("📊 Total Metrics (Bulan Terakhir)")
+        
+        last_month = last_3_months[-1]
+        last_month_data = monthly_perf[last_month]['data']
+        
+        # Hitung Data Bulan Terakhir
+        total_skus = len(last_month_data)
+        
+        # Grouping untuk menghitung Qty Forecast
+        grp = last_month_data.groupby('Status').agg({'SKU_ID':'count', 'Forecast_Qty':'sum'}).to_dict('index')
+        
+        def get_stat(status):
+            row = grp.get(status, {'SKU_ID': 0, 'Forecast_Qty': 0})
+            count = row['SKU_ID']
+            pct = (count / total_skus * 100) if total_skus > 0 else 0
+            qty = row['Forecast_Qty']
+            return count, pct, qty
+
+        u_cnt, u_pct, u_qty = get_stat('Under')
+        a_cnt, a_pct, a_qty = get_stat('Accurate')
+        o_cnt, o_pct, o_qty = get_stat('Over')
+        avg_acc = monthly_perf[last_month]['accuracy']
+        
+        c1, c2, c3, c4 = st.columns(4)
+        
+        with c1:
             st.markdown(f"""
-            <div class="month-card">
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <div class="month-title">{month.strftime('%b %Y')}</div>
-                    <div class="status-badge-container">
-                        <div class="badge badge-red">Under: {counts.get('Under',0)}</div>
-                        <div class="badge badge-green">OK: {counts.get('Accurate',0)}</div>
-                        <div class="badge badge-orange">Over: {counts.get('Over',0)}</div>
-                    </div>
-                </div>
-                <div style="margin-top:10px;">
-                    <div class="month-metric-lbl">Overall Accuracy:</div>
-                    <div class="month-metric-val">{data['accuracy']:.1f}%</div>
-                    <div style="text-align:right; font-size:0.8rem; color:#888;">Total SKUs: {data['total']}</div>
-                </div>
+            <div class="summary-card bg-solid-red">
+                <div class="sum-title">TOTAL UNDER</div>
+                <div class="sum-value">{u_cnt}</div>
+                <div class="sum-pct">{u_pct:.1f}% of total</div>
+                <div class="sum-footer">Total Qty: {u_qty:,.0f}</div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+        with c2:
+            st.markdown(f"""
+            <div class="summary-card bg-solid-green">
+                <div class="sum-title">TOTAL ACCURATE</div>
+                <div class="sum-value">{a_cnt}</div>
+                <div class="sum-pct">{a_pct:.1f}% of total</div>
+                <div class="sum-footer">Total Qty: {a_qty:,.0f}</div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+        with c3:
+            st.markdown(f"""
+            <div class="summary-card bg-solid-orange">
+                <div class="sum-title">TOTAL OVER</div>
+                <div class="sum-value">{o_cnt}</div>
+                <div class="sum-pct">{o_pct:.1f}% of total</div>
+                <div class="sum-footer">Total Qty: {o_qty:,.0f}</div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+        with c4:
+            st.markdown(f"""
+            <div class="summary-card bg-solid-white">
+                <div class="sum-title">AVERAGE ACCURACY</div>
+                <div class="sum-value">{avg_acc:.1f}%</div>
+                <div class="sum-pct">{total_skus} Total SKUs</div>
+                <div class="sum-footer">Period: {last_month.strftime('%b %Y')}</div>
             </div>
             """, unsafe_allow_html=True)
 
-    # --- SUMMARY TOTAL (SOLID CARDS - BULAN TERAKHIR ONLY) ---
-    st.markdown("<br>", unsafe_allow_html=True)
-    
-    # Ambil Data Bulan Terakhir
-    last_month = last_3_months[-1]
-    last_month_data = monthly_perf[last_month]['data']
-    
-    # Hitung Statistik Bulan Terakhir
-    # 1. Total Under
-    df_under = last_month_data[last_month_data['Status'] == 'Under']
-    under_count = len(df_under)
-    under_qty = df_under['Forecast_Qty'].sum() # Pake Forecast Qty sebagai acuan besaran
-    under_pct = (under_count / len(last_month_data) * 100) if len(last_month_data) > 0 else 0
-    
-    # 2. Total Accurate
-    df_acc = last_month_data[last_month_data['Status'] == 'Accurate']
-    acc_count = len(df_acc)
-    acc_qty = df_acc['Forecast_Qty'].sum()
-    acc_pct = (acc_count / len(last_month_data) * 100) if len(last_month_data) > 0 else 0
-    
-    # 3. Total Over
-    df_over = last_month_data[last_month_data['Status'] == 'Over']
-    over_count = len(df_over)
-    over_qty = df_over['Forecast_Qty'].sum()
-    over_pct = (over_count / len(last_month_data) * 100) if len(last_month_data) > 0 else 0
-    
-    # 4. Average
-    avg_acc = monthly_perf[last_month]['accuracy']
-    
-    # Render Solid Cards
-    c1, c2, c3, c4 = st.columns(4)
-    
-    with c1:
-        st.markdown(f"""
-        <div class="summary-card bg-solid-red">
-            <div class="sum-title">TOTAL UNDER</div>
-            <div class="sum-value">{under_count}</div>
-            <div class="sum-pct">{under_pct:.1f}% of total</div>
-            <div class="sum-footer">Total Qty: {under_qty:,.0f}</div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-    with c2:
-        st.markdown(f"""
-        <div class="summary-card bg-solid-green">
-            <div class="sum-title">TOTAL ACCURATE</div>
-            <div class="sum-value">{acc_count}</div>
-            <div class="sum-pct">{acc_pct:.1f}% of total</div>
-            <div class="sum-footer">Total Qty: {acc_qty:,.0f}</div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-    with c3:
-        st.markdown(f"""
-        <div class="summary-card bg-solid-orange">
-            <div class="sum-title">TOTAL OVER</div>
-            <div class="sum-value">{over_count}</div>
-            <div class="sum-pct">{over_pct:.1f}% of total</div>
-            <div class="sum-footer">Total Qty: {over_qty:,.0f}</div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-    with c4:
-        st.markdown(f"""
-        <div class="summary-card bg-solid-white">
-            <div class="sum-title">AVERAGE ACCURACY</div>
-            <div class="sum-value">{avg_acc:.1f}%</div>
-            <div class="sum-pct">{len(last_month_data)} Records</div>
-            <div class="sum-footer">Period: {last_month.strftime('%b %Y')}</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-else:
-    st.warning("Data belum tersedia untuk kalkulasi.")
-
-st.divider()
-
-# --- TABS ANALYSIS ---
-tab_eval, tab_tier, tab_inv, tab_sales, tab_raw = st.tabs([
-    "📋 Evaluasi Rofo", "📊 Tier Analysis", "📦 Inventory", "🔍 Sales vs Rofo", "📁 Raw Data"
-])
-
-# --- TAB: EVALUASI ROFO (DETAIL TABLE) ---
-with tab_eval:
-    if monthly_perf:
-        st.subheader(f"Detail Evaluasi SKU - {last_month.strftime('%b %Y')}")
+        # C. EVALUASI ROFO
+        st.divider()
+        st.subheader(f"📋 Evaluasi Rofo - {last_month.strftime('%b %Y')}")
         
         # Merge Inventory Info
         eval_df = pd.merge(last_month_data, inv_df[['SKU_ID', 'Stock_Qty', 'Avg_Sales_3M']], on='SKU_ID', how='left')
@@ -416,7 +428,7 @@ with tab_eval:
         
         df_show = eval_df[cols_final].rename(columns={'Ratio': 'Achv %', 'Stock_Qty': 'Stock', 'Avg_Sales_3M': 'Avg Sales'})
         
-        t1, t2 = st.tabs(["📉 SKU Under Forecast", "📈 SKU Over Forecast"])
+        t1, t2 = st.tabs(["📉 Detail UNDER Forecast", "📈 Detail OVER Forecast"])
         
         with t1:
             df_u = df_show[df_show['Status']=='Under'].sort_values('Achv %')
@@ -426,35 +438,32 @@ with tab_eval:
             df_o = df_show[df_show['Status']=='Over'].sort_values('Achv %', ascending=False)
             st.dataframe(df_o, column_config={"Achv %": st.column_config.NumberColumn(format="%.1f%%")}, use_container_width=True)
 
-# --- TAB: TIER ANALYSIS ---
-with tab_tier:
+    else:
+        st.warning("Data Forecast/PO tidak cukup.")
+
+# --- TAB 2: TIER ANALYSIS ---
+with tab2:
+    st.subheader("📊 Tier Analysis")
     if monthly_perf:
-        col1, col2 = st.columns([2, 1])
-        with col1:
-            fig = create_tier_chart(last_month_data)
+        last_month = sorted(monthly_perf.keys())[-1]
+        last_month_df = monthly_perf[last_month]['data']
+        
+        c1, c2 = st.columns([2, 1])
+        with c1:
+            fig = create_tier_chart(last_month_df)
             if fig: st.plotly_chart(fig, use_container_width=True)
-        with col2:
-            if 'SKU_Tier' in last_month_data.columns:
-                ts = last_month_data.groupby(['SKU_Tier', 'Status']).size().unstack(fill_value=0)
+        with c2:
+            if 'SKU_Tier' in last_month_df.columns:
+                ts = last_month_df.groupby(['SKU_Tier', 'Status']).size().unstack(fill_value=0)
                 ts['Total'] = ts.sum(axis=1)
                 ts['Acc %'] = (ts.get('Accurate', 0) / ts['Total'] * 100).round(1)
                 st.dataframe(ts[['Accurate', 'Under', 'Over', 'Acc %']].sort_values('Acc %', ascending=False), use_container_width=True)
 
-# --- TAB: INVENTORY ---
-with tab_inv:
+# --- TAB 3: INVENTORY ANALYSIS ---
+with tab3:
+    st.subheader("📦 Inventory Health")
     if not inv_df.empty:
-        c1, c2, c3 = st.columns(3)
-        n_rep = len(inv_df[inv_df['Status']=='Need Replenishment'])
-        n_ideal = len(inv_df[inv_df['Status']=='Ideal/Healthy'])
-        n_high = len(inv_df[inv_df['Status']=='High Stock'])
-        
-        with c1: st.metric("Need Replenishment", n_rep, "Cover < 0.8 Mo")
-        with c2: st.metric("Ideal Inventory", n_ideal, "Cover 0.8 - 1.5 Mo")
-        with c3: st.metric("High Stock", n_high, "Cover > 1.5 Mo")
-        
-        st.divider()
-        st.write("### 🔍 Detail Inventory SKU")
-        fil = st.multiselect("Filter", inv_df['Status'].unique(), default=['Need Replenishment', 'High Stock'])
+        fil = st.multiselect("Filter Status", inv_df['Status'].unique(), default=['Need Replenishment', 'High Stock'])
         
         show_cols = ['SKU_ID', 'Product_Name', 'Stock_Qty', 'Avg_Sales_3M', 'Cover_Months', 'Status', 'Brand', 'SKU_Tier']
         show_cols = [c for c in show_cols if c in inv_df.columns]
@@ -465,8 +474,9 @@ with tab_inv:
             use_container_width=True
         )
 
-# --- TAB: SALES ---
-with tab_sales:
+# --- TAB 4: SALES ---
+with tab4:
+    st.subheader("🔍 Sales vs Forecast Deviation")
     if 'sales' in all_data and 'forecast' in all_data:
         common = sorted(set(all_data['sales']['Month']) & set(all_data['forecast']['Month']))
         if common:
@@ -478,29 +488,24 @@ with tab_sales:
             if not all_data['product'].empty:
                 comp = pd.merge(comp, all_data['product'][['SKU_ID', 'Product_Name']], on='SKU_ID', how='left')
                 
-            comp['Dev %'] = (comp['Sales_Qty'] - comp['Forecast_Qty']) / comp['Forecast_Qty'] * 100
+            comp['Dev %'] = np.where(comp['Forecast_Qty']>0, (comp['Sales_Qty']-comp['Forecast_Qty'])/comp['Forecast_Qty']*100, 0)
             comp['Abs Dev'] = abs(comp['Dev %'])
             
-            st.metric(f"Total Sales ({lm.strftime('%b')})", f"{comp['Sales_Qty'].sum():,.0f}")
-            st.write(f"### High Deviation SKU (>30%)")
             st.dataframe(
                 comp[comp['Abs Dev']>30].sort_values('Abs Dev', ascending=False),
                 column_config={"Dev %": st.column_config.NumberColumn(format="%.1f%%")},
                 use_container_width=True
             )
-        else:
-            st.info("Data Sales & Forecast tidak memiliki bulan yang sama.")
 
-# --- TAB: RAW DATA ---
-with tab_raw:
+# --- TAB 5: RAW DATA ---
+with tab5:
     opt = st.selectbox("Dataset", ["Sales", "Forecast", "PO", "Stock"])
     d_map = {"Sales": all_data.get('sales'), "Forecast": all_data.get('forecast'), "PO": all_data.get('po'), "Stock": all_data.get('stock')}
     st.dataframe(d_map[opt], use_container_width=True)
 
 # --- SIDEBAR ---
 with st.sidebar:
-    st.header("⚙️ Controls")
+    st.title("⚙️ Control")
     if st.button("🔄 Refresh Data", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
-    st.info("V8.1 Visual Masterpiece")
