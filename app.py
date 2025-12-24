@@ -12,7 +12,7 @@ warnings.filterwarnings('ignore')
 
 # --- Konfigurasi Halaman ---
 st.set_page_config(
-    page_title="Inventory Intelligence Pro V8.4",
+    page_title="Inventory Intelligence Pro V9.0",
     page_icon="💎",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -39,18 +39,19 @@ st.markdown("""
     .month-card:hover { transform: translateY(-5px); }
     .month-title { font-size: 1.4rem; font-weight: 700; color: #333; margin-bottom: 10px; }
     
-    .status-badge-container { display: flex; gap: 5px; justify-content: flex-end; margin-bottom: 15px; }
-    .badge { padding: 4px 8px; border-radius: 6px; color: white; font-size: 0.7rem; font-weight: bold; min-width: 50px; text-align: center; }
+    .status-badge-container { display: flex; gap: 4px; justify-content: center; margin-bottom: 15px; flex-wrap: wrap; }
+    .badge { padding: 4px 6px; border-radius: 6px; color: white; font-size: 0.65rem; font-weight: bold; min-width: 40px; text-align: center; }
     .badge-red { background-color: #ef5350; }
     .badge-green { background-color: #66bb6a; }
     .badge-orange { background-color: #ffa726; }
+    .badge-gray { background-color: #78909c; } /* Warna No Rofo */
     
     .month-metric-val { font-size: 1.8rem; font-weight: 800; color: #2c3e50; }
     .month-metric-lbl { font-size: 0.8rem; color: #7f8c8d; }
 
     /* SUMMARY CARDS */
     .summary-card {
-        border-radius: 15px; padding: 25px 20px; text-align: center;
+        border-radius: 15px; padding: 25px 15px; text-align: center;
         color: white; box-shadow: 0 14px 28px rgba(0,0,0,0.10); margin-bottom: 20px;
         transition: transform 0.3s;
     }
@@ -59,26 +60,18 @@ st.markdown("""
     .bg-solid-red { background: linear-gradient(135deg, #FF5252 0%, #D32F2F 100%); }
     .bg-solid-green { background: linear-gradient(135deg, #66BB6A 0%, #2E7D32 100%); }
     .bg-solid-orange { background: linear-gradient(135deg, #FFA726 0%, #EF6C00 100%); }
+    .bg-solid-gray { background: linear-gradient(135deg, #90A4AE 0%, #607D8B 100%); } /* No Rofo */
     .bg-solid-white { background: white; color: #333; border-top: 5px solid #5c6bc0; }
 
-    .sum-title { font-size: 0.9rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; opacity: 0.9; margin-bottom: 15px; }
-    .sum-value { font-size: 3.5rem; font-weight: 800; line-height: 1; margin-bottom: 5px; }
-    .sum-pct { font-size: 1.1rem; font-weight: 600; margin-bottom: 15px; opacity: 0.9; }
-    .sum-footer { border-top: 1px solid rgba(255,255,255,0.3); padding-top: 10px; font-size: 0.85rem; font-weight: 500; opacity: 0.9; }
+    .sum-title { font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; opacity: 0.9; margin-bottom: 10px; }
+    .sum-value { font-size: 2.5rem; font-weight: 800; line-height: 1; margin-bottom: 5px; }
+    .sum-pct { font-size: 0.9rem; font-weight: 600; margin-bottom: 10px; opacity: 0.9; }
+    .sum-footer { border-top: 1px solid rgba(255,255,255,0.3); padding-top: 10px; font-size: 0.75rem; font-weight: 500; opacity: 0.9; }
     
     .bg-solid-white .sum-title { color: #666; }
     .bg-solid-white .sum-value { color: #5c6bc0; }
     .bg-solid-white .sum-pct { color: #333; }
     .bg-solid-white .sum-footer { border-top: 1px solid #eee; color: #666; }
-    
-    /* INVENTORY CARDS */
-    .inv-card {
-        background: white; border-radius: 12px; padding: 1.5rem; text-align: center;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.05); border: 1px solid #eee;
-    }
-    .inv-replenish { border-bottom: 4px solid #ff4757; }
-    .inv-ideal { border-bottom: 4px solid #2ed573; }
-    .inv-high { border-bottom: 4px solid #ffa502; }
 
     .stTabs [data-baseweb="tab-list"] { gap: 10px; margin-top: 20px; }
     .stTabs [data-baseweb="tab"] { background-color: #f8f9fa; border-radius: 8px 8px 0 0; font-weight: 600; }
@@ -94,7 +87,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- ====================================================== ---
-# ---             1. CORE ENGINE (FIXED DATA TYPES)          ---
+# ---             1. CORE ENGINE (ROBUST DATA LOADING)       ---
 # --- ====================================================== ---
 
 @st.cache_resource(show_spinner=False)
@@ -125,11 +118,11 @@ def load_and_process_data(_client):
     gsheet_url = st.secrets["gsheet_url"]
     data = {}
     try:
-        # 1. Product Master
         ws = _client.open_by_url(gsheet_url).worksheet("Product_Master")
         df_p = pd.DataFrame(ws.get_all_records())
         df_p.columns = [c.strip().replace(' ', '_') for c in df_p.columns]
         
+        # FIX: Paksa SKU_ID jadi String
         if 'SKU_ID' in df_p.columns:
             df_p['SKU_ID'] = df_p['SKU_ID'].astype(str).str.strip()
             
@@ -137,12 +130,12 @@ def load_and_process_data(_client):
         df_active = df_p[df_p['Status'].str.upper() == 'ACTIVE'].copy()
         active_ids = df_active['SKU_ID'].tolist()
 
-        # Helper Melt Function
         def robust_melt(sheet_name, val_col):
             ws_temp = _client.open_by_url(gsheet_url).worksheet(sheet_name)
             df_temp = pd.DataFrame(ws_temp.get_all_records())
             df_temp.columns = [c.strip() for c in df_temp.columns]
             
+            # FIX: Paksa SKU_ID jadi String
             if 'SKU_ID' in df_temp.columns:
                 df_temp['SKU_ID'] = df_temp['SKU_ID'].astype(str).str.strip()
             else:
@@ -152,10 +145,9 @@ def load_and_process_data(_client):
             
             df_long = df_temp[['SKU_ID'] + m_cols].melt(id_vars=['SKU_ID'], value_vars=m_cols, var_name='Month_Label', value_name=val_col)
             df_long[val_col] = pd.to_numeric(df_long[val_col], errors='coerce').fillna(0)
-            
-            # --- FIX: FORCE MONTH TO DATETIME ---
             df_long['Month'] = df_long['Month_Label'].apply(parse_month_label)
-            df_long['Month'] = pd.to_datetime(df_long['Month']) 
+            # FIX: Force to datetime
+            df_long['Month'] = pd.to_datetime(df_long['Month'])
             
             return df_long[df_long['SKU_ID'].isin(active_ids)]
 
@@ -163,7 +155,6 @@ def load_and_process_data(_client):
         data['forecast'] = robust_melt("Rofo", "Forecast_Qty")
         data['po'] = robust_melt("PO", "PO_Qty")
         
-        # Stock Data
         ws_s = _client.open_by_url(gsheet_url).worksheet("Stock_Onhand")
         df_s = pd.DataFrame(ws_s.get_all_records())
         df_s.columns = [c.strip().replace(' ', '_') for c in df_s.columns]
@@ -186,13 +177,13 @@ def load_and_process_data(_client):
         st.error(f"Error Loading Data: {e}"); return {}
 
 # --- ====================================================== ---
-# ---             2. ANALYTICS ENGINE                        ---
+# ---             2. ANALYTICS ENGINE (UPDATED V9.0)         ---
 # --- ====================================================== ---
 
 def calculate_monthly_performance(df_forecast, df_po, df_product):
     if df_forecast.empty or df_po.empty: return {}
     
-    # --- FIX: Ensure 'Month' is datetime on both sides before merge ---
+    # Ensure Datetime
     df_forecast['Month'] = pd.to_datetime(df_forecast['Month'])
     df_po['Month'] = pd.to_datetime(df_po['Month'])
     
@@ -203,20 +194,39 @@ def calculate_monthly_performance(df_forecast, df_po, df_product):
         meta = df_product[['SKU_ID', 'Product_Name', 'SKU_Tier', 'Brand']].drop_duplicates()
         df_merged = pd.merge(df_merged, meta, on='SKU_ID', how='left')
     
+    # Calculate Ratio (Handle div by zero later)
     df_merged['Ratio'] = np.where(df_merged['Forecast_Qty']>0, (df_merged['PO_Qty']/df_merged['Forecast_Qty'])*100, 0)
-    df_merged['Status'] = np.select(
-        [df_merged['Ratio'] < 80, (df_merged['Ratio'] >= 80) & (df_merged['Ratio'] <= 120), df_merged['Ratio'] > 120],
-        ['Under', 'Accurate', 'Over'], default='Unknown'
-    )
-    df_merged['APE'] = abs(df_merged['Ratio'] - 100)
+    
+    # --- LOGIC STATUS BARU (V9.0) ---
+    conditions = [
+        df_merged['Forecast_Qty'] == 0,  # Prioritas 1: No Rofo (Flush Out / Disc)
+        df_merged['Ratio'] < 80, 
+        (df_merged['Ratio'] >= 80) & (df_merged['Ratio'] <= 120), 
+        df_merged['Ratio'] > 120
+    ]
+    choices = ['No Rofo', 'Under', 'Accurate', 'Over']
+    
+    df_merged['Status'] = np.select(conditions, choices, default='Unknown')
+    
+    # --- LOGIC AKURASI BARU: Exclude 'No Rofo' ---
+    # Jika Status 'No Rofo', APE dianggap NaN agar tidak dihitung di rata-rata
+    df_merged['APE'] = np.where(df_merged['Status'] == 'No Rofo', np.nan, abs(df_merged['Ratio'] - 100))
     
     monthly_stats = {}
     for month in sorted(df_merged['Month'].unique()):
         month_data = df_merged[df_merged['Month'] == month].copy()
+        
+        # Calculate Accuracy excluding No Rofo
+        mean_ape = month_data['APE'].mean() # Pandas secara default ignore NaN
+        accuracy = 100 - mean_ape if not pd.isna(mean_ape) else 0
+        
+        # Total records (untuk display)
+        total_records = len(month_data)
+        
         monthly_stats[month] = {
-            'accuracy': 100 - month_data['APE'].mean(),
+            'accuracy': accuracy,
             'counts': month_data['Status'].value_counts().to_dict(),
-            'total': len(month_data),
+            'total': total_records,
             'data': month_data
         }
     return monthly_stats
@@ -225,7 +235,6 @@ def calculate_inventory_metrics(df_stock, df_sales, df_product):
     if df_stock.empty: return pd.DataFrame()
     
     if not df_sales.empty:
-        # Ensure Month is datetime
         df_sales['Month'] = pd.to_datetime(df_sales['Month'])
         months = sorted(df_sales['Month'].unique())[-3:]
         sales_3m = df_sales[df_sales['Month'].isin(months)]
@@ -249,10 +258,19 @@ def calculate_inventory_metrics(df_stock, df_sales, df_product):
 def create_tier_chart(df_data):
     if df_data.empty: return None
     df_clean = df_data.dropna(subset=['SKU_Tier'])
+    
+    # Filter out No Rofo for Tier Chart Accuracy view (Optional, but cleaner)
+    # Or keep it to show distribution. Let's keep it but color it Gray.
     agg = df_clean.groupby(['SKU_Tier', 'Status']).size().reset_index(name='Count')
+    
     fig = px.bar(agg, x="SKU_Tier", y="Count", color="Status", 
                  title="Accuracy Distribution by Tier",
-                 color_discrete_map={'Under': '#ef5350', 'Accurate': '#66bb6a', 'Over': '#ffa726'},
+                 color_discrete_map={
+                     'Under': '#ef5350', 
+                     'Accurate': '#66bb6a', 
+                     'Over': '#ffa726',
+                     'No Rofo': '#78909c' # Gray
+                 },
                  template="plotly_white")
     fig.update_layout(height=400)
     return fig
@@ -279,6 +297,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 with tab1:
     if monthly_perf:
         st.subheader("Forecast Accuracy - 3 Bulan Terakhir")
+        st.caption("*Accuracy score exclude 'No Rofo' (Flush Out/Disc items)")
         
         last_3_months = sorted(monthly_perf.keys())[-3:]
         cols = st.columns(len(last_3_months))
@@ -292,12 +311,13 @@ with tab1:
     <div class="month-title">{month.strftime('%b %Y')}</div>
     <div style="text-align:center; margin-bottom:15px;">
         <span style="font-size:2.5rem; font-weight:800; color:#5c6bc0;">{data['accuracy']:.1f}%</span>
-        <br><span style="color:#888; font-size:0.8rem;">Overall Accuracy</span>
+        <br><span style="color:#888; font-size:0.8rem;">Performance Accuracy</span>
     </div>
     <div class="status-badge-container" style="justify-content: center; gap: 8px;">
-        <div class="badge badge-red">Under: {counts.get('Under',0)}</div>
-        <div class="badge badge-green">OK: {counts.get('Accurate',0)}</div>
-        <div class="badge badge-orange">Over: {counts.get('Over',0)}</div>
+        <div class="badge badge-red">Und: {counts.get('Under',0)}</div>
+        <div class="badge badge-green">Acc: {counts.get('Accurate',0)}</div>
+        <div class="badge badge-orange">Ovr: {counts.get('Over',0)}</div>
+        <div class="badge badge-gray">None: {counts.get('No Rofo',0)}</div>
     </div>
 </div>
 """
@@ -312,58 +332,73 @@ with tab1:
         total_skus = len(last_month_data)
         
         # Helper Stat
-        grp = last_month_data.groupby('Status').agg({'SKU_ID':'count', 'Forecast_Qty':'sum'}).to_dict('index')
+        grp = last_month_data.groupby('Status').agg({'SKU_ID':'count', 'Forecast_Qty':'sum', 'PO_Qty':'sum'}).to_dict('index')
+        
         def get_stat(status):
-            row = grp.get(status, {'SKU_ID': 0, 'Forecast_Qty': 0})
+            row = grp.get(status, {'SKU_ID': 0, 'Forecast_Qty': 0, 'PO_Qty': 0})
             count = row['SKU_ID']
             pct = (count / total_skus * 100) if total_skus > 0 else 0
-            qty = row['Forecast_Qty']
+            # Jika No Rofo, tampilkan PO Qty (karena Forecast 0)
+            qty = row['PO_Qty'] if status == 'No Rofo' else row['Forecast_Qty']
             return count, pct, qty
 
         u_cnt, u_pct, u_qty = get_stat('Under')
         a_cnt, a_pct, a_qty = get_stat('Accurate')
         o_cnt, o_pct, o_qty = get_stat('Over')
+        nr_cnt, nr_pct, nr_qty = get_stat('No Rofo')
+        
         avg_acc = monthly_perf[last_month]['accuracy']
         
-        c1, c2, c3, c4 = st.columns(4)
+        # 5 Columns Layout
+        c1, c2, c3, c4, c5 = st.columns(5)
         
         with c1:
             st.markdown(f"""
             <div class="summary-card bg-solid-red">
-                <div class="sum-title">TOTAL UNDER</div>
+                <div class="sum-title">UNDER</div>
                 <div class="sum-value">{u_cnt}</div>
-                <div class="sum-pct">{u_pct:.1f}% of total</div>
-                <div class="sum-footer">Total Qty: {u_qty:,.0f}</div>
+                <div class="sum-pct">{u_pct:.1f}%</div>
+                <div class="sum-footer">Rofo: {u_qty:,.0f}</div>
             </div>
             """, unsafe_allow_html=True)
             
         with c2:
             st.markdown(f"""
             <div class="summary-card bg-solid-green">
-                <div class="sum-title">TOTAL ACCURATE</div>
+                <div class="sum-title">ACCURATE</div>
                 <div class="sum-value">{a_cnt}</div>
-                <div class="sum-pct">{a_pct:.1f}% of total</div>
-                <div class="sum-footer">Total Qty: {a_qty:,.0f}</div>
+                <div class="sum-pct">{a_pct:.1f}%</div>
+                <div class="sum-footer">Rofo: {a_qty:,.0f}</div>
             </div>
             """, unsafe_allow_html=True)
             
         with c3:
             st.markdown(f"""
             <div class="summary-card bg-solid-orange">
-                <div class="sum-title">TOTAL OVER</div>
+                <div class="sum-title">OVER</div>
                 <div class="sum-value">{o_cnt}</div>
-                <div class="sum-pct">{o_pct:.1f}% of total</div>
-                <div class="sum-footer">Total Qty: {o_qty:,.0f}</div>
+                <div class="sum-pct">{o_pct:.1f}%</div>
+                <div class="sum-footer">Rofo: {o_qty:,.0f}</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with c4:
+            st.markdown(f"""
+            <div class="summary-card bg-solid-gray">
+                <div class="sum-title">NO ROFO</div>
+                <div class="sum-value">{nr_cnt}</div>
+                <div class="sum-pct">{nr_pct:.1f}%</div>
+                <div class="sum-footer">PO: {nr_qty:,.0f}</div>
             </div>
             """, unsafe_allow_html=True)
             
-        with c4:
+        with c5:
             st.markdown(f"""
             <div class="summary-card bg-solid-white">
-                <div class="sum-title">AVERAGE ACCURACY</div>
+                <div class="sum-title">PERFORMANCE</div>
                 <div class="sum-value">{avg_acc:.1f}%</div>
                 <div class="sum-pct">{total_skus} Total SKUs</div>
-                <div class="sum-footer">Period: {last_month.strftime('%b %Y')}</div>
+                <div class="sum-footer">{last_month.strftime('%b')} Score</div>
             </div>
             """, unsafe_allow_html=True)
 
@@ -371,16 +406,14 @@ with tab1:
         st.divider()
         st.subheader(f"📋 Evaluasi Rofo - {last_month.strftime('%b %Y')}")
         
-        # Merge Inventory
         eval_df = pd.merge(last_month_data, inv_df[['SKU_ID', 'Stock_Qty', 'Avg_Sales_3M']], on='SKU_ID', how='left')
-        
         cols_final = ['SKU_ID', 'Product_Name', 'Brand', 'SKU_Tier', 'Status', 
                       'Forecast_Qty', 'PO_Qty', 'Ratio', 'Stock_Qty', 'Avg_Sales_3M']
         cols_final = [c for c in cols_final if c in eval_df.columns]
         
         df_show = eval_df[cols_final].rename(columns={'Ratio': 'Achv %', 'Stock_Qty': 'Stock', 'Avg_Sales_3M': 'Avg Sales'})
         
-        t1, t2 = st.tabs(["📉 Detail UNDER Forecast", "📈 Detail OVER Forecast"])
+        t1, t2, t3 = st.tabs(["📉 Detail UNDER", "📈 Detail OVER", "⚪ Detail NO ROFO"])
         
         with t1:
             df_u = df_show[df_show['Status']=='Under'].sort_values('Achv %')
@@ -389,6 +422,10 @@ with tab1:
         with t2:
             df_o = df_show[df_show['Status']=='Over'].sort_values('Achv %', ascending=False)
             st.dataframe(df_o, column_config={"Achv %": st.column_config.NumberColumn(format="%.1f%%")}, use_container_width=True)
+            
+        with t3:
+            df_nr = df_show[df_show['Status']=='No Rofo'].sort_values('PO_Qty', ascending=False)
+            st.dataframe(df_nr, column_config={"Achv %": st.column_config.NumberColumn(format="%.1f%%")}, use_container_width=True)
 
     else:
         st.warning("Data Forecast/PO tidak cukup.")
@@ -406,25 +443,17 @@ with tab2:
             if fig: st.plotly_chart(fig, use_container_width=True)
         with c2:
             if 'SKU_Tier' in last_month_df.columns:
-                ts = last_month_df.groupby(['SKU_Tier', 'Status']).size().unstack(fill_value=0)
+                # Exclude No Rofo from Accuracy % calc
+                valid_tier = last_month_df[last_month_df['Status'] != 'No Rofo']
+                ts = valid_tier.groupby(['SKU_Tier', 'Status']).size().unstack(fill_value=0)
                 ts['Total'] = ts.sum(axis=1)
                 ts['Acc %'] = (ts.get('Accurate', 0) / ts['Total'] * 100).round(1)
-                st.dataframe(ts[['Accurate', 'Under', 'Over', 'Acc %']].sort_values('Acc %', ascending=False), use_container_width=True)
+                st.dataframe(ts.sort_values('Acc %', ascending=False), use_container_width=True)
 
 # --- TAB 3: INVENTORY ANALYSIS ---
 with tab3:
     st.subheader("📦 Inventory Health")
     if not inv_df.empty:
-        c1, c2, c3 = st.columns(3)
-        n_rep = len(inv_df[inv_df['Status']=='Need Replenishment'])
-        n_ideal = len(inv_df[inv_df['Status']=='Ideal/Healthy'])
-        n_high = len(inv_df[inv_df['Status']=='High Stock'])
-        
-        with c1: st.markdown(f'<div class="inv-card inv-replenish"><h3>Need Replenishment</h3><h1 style="color:#ff4757">{n_rep}</h1><p>Cover < 0.8 Mo</p></div>', unsafe_allow_html=True)
-        with c2: st.markdown(f'<div class="inv-card inv-ideal"><h3>Ideal Inventory</h3><h1 style="color:#2ed573">{n_ideal}</h1><p>0.8 - 1.5 Mo</p></div>', unsafe_allow_html=True)
-        with c3: st.markdown(f'<div class="inv-card inv-high"><h3>High Stock</h3><h1 style="color:#ffa502">{n_high}</h1><p>Cover > 1.5 Mo</p></div>', unsafe_allow_html=True)
-        
-        st.divider()
         fil = st.multiselect("Filter Status", inv_df['Status'].unique(), default=['Need Replenishment', 'High Stock'])
         show_cols = ['SKU_ID', 'Product_Name', 'Stock_Qty', 'Avg_Sales_3M', 'Cover_Months', 'Status', 'Brand', 'SKU_Tier']
         show_cols = [c for c in show_cols if c in inv_df.columns]
