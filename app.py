@@ -12,7 +12,7 @@ warnings.filterwarnings('ignore')
 
 # --- Konfigurasi Halaman ---
 st.set_page_config(
-    page_title="Inventory Intelligence Pro V8.2",
+    page_title="Inventory Intelligence Pro V8.3",
     page_icon="💎",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -21,49 +21,26 @@ st.set_page_config(
 # --- CSS PREMIUM (FLOATING & SOLID CARDS) ---
 st.markdown("""
 <style>
-    /* Import Font Keren */
     @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;800&display=swap');
     html, body, [class*="css"] { font-family: 'Poppins', sans-serif; }
 
-    /* Header Styling */
     .main-header {
-        font-size: 2.5rem;
-        font-weight: 800;
-        color: #5c6bc0;
-        text-align: center;
-        margin-bottom: 0.5rem;
-        text-transform: uppercase;
-        letter-spacing: 1px;
+        font-size: 2.5rem; font-weight: 800; color: #5c6bc0;
+        text-align: center; margin-bottom: 0.5rem; text-transform: uppercase; letter-spacing: 1px;
     }
-    .sub-header-caption {
-        text-align: center;
-        color: #888;
-        font-size: 0.9rem;
-        margin-bottom: 2rem;
-    }
+    .sub-header-caption { text-align: center; color: #888; font-size: 0.9rem; margin-bottom: 2rem; }
 
-    /* MONTH CARD (Top Row - White Floating) */
+    /* MONTH CARD */
     .month-card {
-        background: white;
-        border-radius: 15px;
-        padding: 20px;
-        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
-        border-left: 6px solid #5c6bc0;
-        transition: transform 0.3s ease;
-        margin-bottom: 20px;
-        height: 100%;
+        background: white; border-radius: 15px; padding: 20px;
+        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1); border-left: 6px solid #5c6bc0;
+        transition: transform 0.3s ease; margin-bottom: 20px; height: 100%;
     }
     .month-card:hover { transform: translateY(-5px); }
-    
     .month-title { font-size: 1.4rem; font-weight: 700; color: #333; margin-bottom: 10px; }
     
-    .status-badge-container {
-        display: flex; gap: 5px; justify-content: flex-end; margin-bottom: 15px;
-    }
-    .badge {
-        padding: 4px 8px; border-radius: 6px; color: white; 
-        font-size: 0.7rem; font-weight: bold; min-width: 50px; text-align: center;
-    }
+    .status-badge-container { display: flex; gap: 5px; justify-content: flex-end; margin-bottom: 15px; }
+    .badge { padding: 4px 8px; border-radius: 6px; color: white; font-size: 0.7rem; font-weight: bold; min-width: 50px; text-align: center; }
     .badge-red { background-color: #ef5350; }
     .badge-green { background-color: #66bb6a; }
     .badge-orange { background-color: #ffa726; }
@@ -71,69 +48,36 @@ st.markdown("""
     .month-metric-val { font-size: 1.8rem; font-weight: 800; color: #2c3e50; }
     .month-metric-lbl { font-size: 0.8rem; color: #7f8c8d; }
 
-    /* SUMMARY CARDS (BOTTOM ROW - SOLID COLORS) */
+    /* SUMMARY CARDS */
     .summary-card {
-        border-radius: 15px;
-        padding: 25px 20px;
-        text-align: center;
-        color: white;
-        box-shadow: 0 14px 28px rgba(0,0,0,0.10), 0 10px 10px rgba(0,0,0,0.10);
-        margin-bottom: 20px;
-        transition: all 0.3s cubic-bezier(.25,.8,.25,1);
-        position: relative;
-        overflow: hidden;
+        border-radius: 15px; padding: 25px 20px; text-align: center; color: white;
+        box-shadow: 0 14px 28px rgba(0,0,0,0.10); margin-bottom: 20px;
+        transition: transform 0.3s;
     }
-    .summary-card:hover { transform: scale(1.02); box-shadow: 0 19px 38px rgba(0,0,0,0.15); }
+    .summary-card:hover { transform: scale(1.02); }
 
-    /* Solid Colors Gradients */
     .bg-solid-red { background: linear-gradient(135deg, #FF5252 0%, #D32F2F 100%); }
     .bg-solid-green { background: linear-gradient(135deg, #66BB6A 0%, #2E7D32 100%); }
     .bg-solid-orange { background: linear-gradient(135deg, #FFA726 0%, #EF6C00 100%); }
-    
-    /* White Card for Average */
-    .bg-solid-white { 
-        background: white; 
-        color: #333; 
-        border-top: 5px solid #5c6bc0;
-    }
+    .bg-solid-white { background: white; color: #333; border-top: 5px solid #5c6bc0; }
 
-    /* Typography inside Summary Cards */
-    .sum-title { 
-        font-size: 0.9rem; font-weight: 700; text-transform: uppercase; 
-        letter-spacing: 1px; opacity: 0.9; margin-bottom: 15px;
-    }
-    .sum-value { 
-        font-size: 3.5rem; font-weight: 800; line-height: 1; margin-bottom: 5px; 
-    }
-    .sum-pct {
-        font-size: 1.1rem; font-weight: 600; margin-bottom: 15px; opacity: 0.9;
-    }
-    .sum-footer {
-        border-top: 1px solid rgba(255,255,255,0.3);
-        padding-top: 10px;
-        font-size: 0.85rem;
-        font-weight: 500;
-        opacity: 0.9;
-    }
+    .sum-title { font-size: 0.9rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; opacity: 0.9; margin-bottom: 15px; }
+    .sum-value { font-size: 3.5rem; font-weight: 800; line-height: 1; margin-bottom: 5px; }
+    .sum-pct { font-size: 1.1rem; font-weight: 600; margin-bottom: 15px; opacity: 0.9; }
+    .sum-footer { border-top: 1px solid rgba(255,255,255,0.3); padding-top: 10px; font-size: 0.85rem; font-weight: 500; opacity: 0.9; }
     
-    /* Text colors for White Card */
     .bg-solid-white .sum-title { color: #666; }
     .bg-solid-white .sum-value { color: #5c6bc0; }
     .bg-solid-white .sum-pct { color: #333; }
     .bg-solid-white .sum-footer { border-top: 1px solid #eee; color: #666; }
 
-    /* Tabs Styling */
     .stTabs [data-baseweb="tab-list"] { gap: 10px; margin-top: 20px; }
-    .stTabs [data-baseweb="tab"] {
-        background-color: #f8f9fa; border-radius: 8px 8px 0 0; border: none; font-weight: 600;
-    }
-    .stTabs [aria-selected="true"] {
-        background-color: white; color: #5c6bc0; border-top: 3px solid #5c6bc0;
-    }
+    .stTabs [data-baseweb="tab"] { background-color: #f8f9fa; border-radius: 8px 8px 0 0; font-weight: 600; }
+    .stTabs [aria-selected="true"] { background-color: white; color: #5c6bc0; border-top: 3px solid #5c6bc0; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- ICON HEADER ---
+# --- HEADER ---
 st.markdown("""
 <div style="text-align: center; font-size: 3.5rem; margin-bottom: -15px;">🟦</div>
 <h1 class="main-header">INVENTORY INTELLIGENCE DASHBOARD</h1>
@@ -141,7 +85,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- ====================================================== ---
-# ---             1. CORE ENGINE (ROBUST DATA LOADING)       ---
+# ---             1. CORE ENGINE (FIXED DATA TYPES)          ---
 # --- ====================================================== ---
 
 @st.cache_resource(show_spinner=False)
@@ -172,12 +116,12 @@ def load_and_process_data(_client):
     gsheet_url = st.secrets["gsheet_url"]
     data = {}
     try:
-        # 1. Product Master (Metadata)
+        # 1. Product Master
         ws = _client.open_by_url(gsheet_url).worksheet("Product_Master")
         df_p = pd.DataFrame(ws.get_all_records())
         df_p.columns = [c.strip().replace(' ', '_') for c in df_p.columns]
         
-        # --- FIX #1: PAKSA SKU_ID JADI STRING DI MASTER ---
+        # FIX: Paksa SKU_ID jadi String di Master
         if 'SKU_ID' in df_p.columns:
             df_p['SKU_ID'] = df_p['SKU_ID'].astype(str).str.strip()
             
@@ -191,16 +135,19 @@ def load_and_process_data(_client):
             df_temp = pd.DataFrame(ws_temp.get_all_records())
             df_temp.columns = [c.strip() for c in df_temp.columns]
             
-            # --- FIX #2: PAKSA SKU_ID JADI STRING DI TRANSAKSI ---
+            # FIX: Paksa SKU_ID jadi String di Sheet Transaksi
             if 'SKU_ID' in df_temp.columns:
                 df_temp['SKU_ID'] = df_temp['SKU_ID'].astype(str).str.strip()
+            else:
+                return pd.DataFrame() # Return empty if no SKU_ID
                 
             m_cols = [c for c in df_temp.columns if any(m in c.upper() for m in ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'])]
-            if 'SKU_ID' not in df_temp.columns: return pd.DataFrame()
             
             df_long = df_temp[['SKU_ID'] + m_cols].melt(id_vars=['SKU_ID'], value_vars=m_cols, var_name='Month_Label', value_name=val_col)
             df_long[val_col] = pd.to_numeric(df_long[val_col], errors='coerce').fillna(0)
             df_long['Month'] = df_long['Month_Label'].apply(parse_month_label)
+            
+            # Filter Active Only
             return df_long[df_long['SKU_ID'].isin(active_ids)]
 
         data['sales'] = robust_melt("Sales", "Sales_Qty")
@@ -212,7 +159,7 @@ def load_and_process_data(_client):
         df_s = pd.DataFrame(ws_s.get_all_records())
         df_s.columns = [c.strip().replace(' ', '_') for c in df_s.columns]
         
-        # --- FIX #3: PAKSA SKU_ID JADI STRING DI STOCK ---
+        # FIX: Paksa SKU_ID jadi String di Stock
         if 'SKU_ID' in df_s.columns:
             df_s['SKU_ID'] = df_s['SKU_ID'].astype(str).str.strip()
             
@@ -220,6 +167,7 @@ def load_and_process_data(_client):
         if s_col and 'SKU_ID' in df_s.columns:
             df_stock = df_s[['SKU_ID', s_col]].rename(columns={s_col: 'Stock_Qty'})
             df_stock['Stock_Qty'] = pd.to_numeric(df_stock['Stock_Qty'], errors='coerce').fillna(0)
+            # Group by SKU_ID to ensure unique
             data['stock'] = df_stock[df_stock['SKU_ID'].isin(active_ids)].groupby('SKU_ID').max().reset_index()
         else:
             data['stock'] = pd.DataFrame(columns=['SKU_ID', 'Stock_Qty'])
@@ -228,7 +176,7 @@ def load_and_process_data(_client):
         data['product_active'] = df_active
         return data
     except Exception as e:
-        st.error(f"Error Loading: {e}"); return {}
+        st.error(f"Error Loading Data: {e}"); return {}
 
 # --- ====================================================== ---
 # ---             2. ANALYTICS ENGINE                        ---
@@ -237,15 +185,13 @@ def load_and_process_data(_client):
 def calculate_monthly_performance(df_forecast, df_po, df_product):
     if df_forecast.empty or df_po.empty: return {}
     
-    # Merge Forecast & PO
+    # Merge Forecast & PO (Sekarang Aman karena SKU_ID sudah String semua)
     df_merged = pd.merge(df_forecast, df_po, on=['SKU_ID', 'Month'], how='inner')
     
-    # Join Metadata
     if not df_product.empty:
         meta = df_product[['SKU_ID', 'Product_Name', 'SKU_Tier', 'Brand']].drop_duplicates()
         df_merged = pd.merge(df_merged, meta, on='SKU_ID', how='left')
     
-    # Calculate Metrics
     df_merged['Ratio'] = np.where(df_merged['Forecast_Qty']>0, (df_merged['PO_Qty']/df_merged['Forecast_Qty'])*100, 0)
     df_merged['Status'] = np.select(
         [df_merged['Ratio'] < 80, (df_merged['Ratio'] >= 80) & (df_merged['Ratio'] <= 120), df_merged['Ratio'] > 120],
@@ -253,7 +199,6 @@ def calculate_monthly_performance(df_forecast, df_po, df_product):
     )
     df_merged['APE'] = abs(df_merged['Ratio'] - 100)
     
-    # Group by Month
     monthly_stats = {}
     for month in sorted(df_merged['Month'].unique()):
         month_data = df_merged[df_merged['Month'] == month].copy()
@@ -268,7 +213,6 @@ def calculate_monthly_performance(df_forecast, df_po, df_product):
 def calculate_inventory_metrics(df_stock, df_sales, df_product):
     if df_stock.empty: return pd.DataFrame()
     
-    # Calculate 3-Month Average Sales
     if not df_sales.empty:
         months = sorted(df_sales['Month'].unique())[-3:]
         sales_3m = df_sales[df_sales['Month'].isin(months)]
@@ -276,7 +220,6 @@ def calculate_inventory_metrics(df_stock, df_sales, df_product):
     else:
         avg_sales = pd.DataFrame(columns=['SKU_ID', 'Avg_Sales_3M'])
         
-    # Merge Stock & Sales
     inv = pd.merge(df_stock, avg_sales, on='SKU_ID', how='left')
     inv['Avg_Sales_3M'] = inv['Avg_Sales_3M'].fillna(0)
     
@@ -319,24 +262,23 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📈 Performance Dashboard", "📊 Tier Analysis", "📦 Inventory Analysis", "🔍 Sales Analysis", "📋 Data Explorer"
 ])
 
-# --- TAB 1: DASHBOARD UTAMA (Requested: Month Cards & Evaluasi Rofo) ---
+# --- TAB 1: DASHBOARD UTAMA ---
 with tab1:
     if monthly_perf:
-        # A. MONTH CARDS (3 Bulan Terakhir)
-        st.subheader("📅 Forecast Performance - 3 Bulan Terakhir")
+        st.subheader("Forecast Accuracy - 3 Bulan Terakhir")
+        
         last_3_months = sorted(monthly_perf.keys())[-3:]
         cols = st.columns(len(last_3_months))
         
         for idx, month in enumerate(last_3_months):
             data = monthly_perf[month]
             counts = data['counts']
-            
             with cols[idx]:
                 html_code = f"""
 <div class="month-card">
     <div class="month-title">{month.strftime('%b %Y')}</div>
     <div style="text-align:center; margin-bottom:15px;">
-        <span style="font-size:2.5rem; font-weight:800; color:#2a5298;">{data['accuracy']:.1f}%</span>
+        <span style="font-size:2.5rem; font-weight:800; color:#5c6bc0;">{data['accuracy']:.1f}%</span>
         <br><span style="color:#888; font-size:0.8rem;">Overall Accuracy</span>
     </div>
     <div class="status-badge-container" style="justify-content: center; gap: 8px;">
@@ -348,19 +290,16 @@ with tab1:
 """
                 st.markdown(html_code, unsafe_allow_html=True)
         
-        # B. TOTAL SUMMARY (SOLID CARDS - BULAN TERAKHIR)
+        # --- TOTALAN BULAN TERAKHIR ---
         st.markdown("<br>", unsafe_allow_html=True)
         st.subheader("📊 Total Metrics (Bulan Terakhir)")
         
         last_month = last_3_months[-1]
         last_month_data = monthly_perf[last_month]['data']
-        
-        # Hitung Data Bulan Terakhir
         total_skus = len(last_month_data)
         
-        # Grouping untuk menghitung Qty Forecast
+        # Helper Stat
         grp = last_month_data.groupby('Status').agg({'SKU_ID':'count', 'Forecast_Qty':'sum'}).to_dict('index')
-        
         def get_stat(status):
             row = grp.get(status, {'SKU_ID': 0, 'Forecast_Qty': 0})
             count = row['SKU_ID']
@@ -419,7 +358,7 @@ with tab1:
         st.divider()
         st.subheader(f"📋 Evaluasi Rofo - {last_month.strftime('%b %Y')}")
         
-        # Merge Inventory Info
+        # Merge Inventory
         eval_df = pd.merge(last_month_data, inv_df[['SKU_ID', 'Stock_Qty', 'Avg_Sales_3M']], on='SKU_ID', how='left')
         
         cols_final = ['SKU_ID', 'Product_Name', 'Brand', 'SKU_Tier', 'Status', 
@@ -464,7 +403,6 @@ with tab3:
     st.subheader("📦 Inventory Health")
     if not inv_df.empty:
         fil = st.multiselect("Filter Status", inv_df['Status'].unique(), default=['Need Replenishment', 'High Stock'])
-        
         show_cols = ['SKU_ID', 'Product_Name', 'Stock_Qty', 'Avg_Sales_3M', 'Cover_Months', 'Status', 'Brand', 'SKU_Tier']
         show_cols = [c for c in show_cols if c in inv_df.columns]
         
@@ -506,6 +444,6 @@ with tab5:
 # --- SIDEBAR ---
 with st.sidebar:
     st.title("⚙️ Control")
-    if st.button("🔄 Refresh Data", use_container_width=True):
+    if st.button("🔄 Refresh Data"):
         st.cache_data.clear()
         st.rerun()
